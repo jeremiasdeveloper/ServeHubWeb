@@ -9,6 +9,13 @@
 // alive across view changes (ref-counted listeners only). The connection
 // status flag in the store is therefore owned exclusively by the manager,
 // which avoids flickering when views mount/unmount.
+//
+// Reconnection policy: attempts are CAPPED with exponential backoff. An
+// unbounded 1-second retry loop spams the console with "Failed to fetch"
+// forever whenever the realtime endpoint becomes unreachable (idle proxy
+// timeout, laptop sleep, network switch...). After the cap is reached the
+// manager goes quiet and self-heals: as soon as the user refocuses the tab
+// or the network comes back, connection is retried automatically.
 
 import { useEffect, useRef } from "react"
 import { io, type Socket } from "socket.io-client"
@@ -25,9 +32,37 @@ interface ManagedSocket {
   socket: Socket
   userId: string
   listeners: Set<EventListener>
+  recoveryInstalled: boolean
 }
 
+const MAX_RECONNECT_ATTEMPTS = 8
+const RECONNECT_DELAY_MAX_MS = 15000
+
 let managed: ManagedSocket | null = null
+
+// Install (once per socket) self-healing triggers: refocus tab, come back
+// online, or become visible after being hidden → retry connecting.
+function installRecovery(socket: Socket) {
+  if (managed?.recoveryInstalled) return
+
+  const tryRecover = () => {
+    if (!managed || managed.socket !== socket) return
+    if (!socket.connected && !socket.active) {
+      // socket.active === false means engine.io gave up reconnecting
+      socket.connect()
+    }
+  }
+
+  const onVisibility = () => {
+    if (typeof document !== "undefined" && document.visibilityState === "visible") tryRecover()
+  }
+
+  window.addEventListener("focus", tryRecover)
+  window.addEventListener("online", tryRecover)
+  document.addEventListener("visibilitychange", onVisibility)
+
+  if (managed) managed.recoveryInstalled = true
+}
 
 function acquireSocket(userId: string): Socket {
   if (managed && managed.userId === userId) return managed.socket
@@ -40,7 +75,9 @@ function acquireSocket(userId: string): Socket {
     transports: ["websocket", "polling"],
     reconnection: true,
     reconnectionDelay: 1000,
-    reconnectionAttempts: Infinity,
+    reconnectionDelayMax: RECONNECT_DELAY_MAX_MS,
+    reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
+    timeout: 10000,
   })
 
   const setRealtimeConnected = useApp.getState().setRealtimeConnected
@@ -52,13 +89,18 @@ function acquireSocket(userId: string): Socket {
   socket.on("disconnect", () => setRealtimeConnected(false))
   socket.io.on("reconnect_attempt", () => setRealtimeConnected(false))
   socket.io.on("reconnect", () => setRealtimeConnected(true))
+  // engine.io exhausted its attempts — stay offline silently until the
+  // user refocuses the tab / network recovers (installRecovery).
+  socket.io.on("reconnect_failed", () => setRealtimeConnected(false))
 
-  managed = { socket, userId, listeners: new Set() }
+  managed = { socket, userId, listeners: new Set(), recoveryInstalled: false }
+  installRecovery(socket)
   return socket
 }
 
 export function releaseSocket() {
   if (managed) {
+    managed.socket.removeAllListeners()
     managed.socket.disconnect()
     useApp.getState().setRealtimeConnected(false)
     managed = null

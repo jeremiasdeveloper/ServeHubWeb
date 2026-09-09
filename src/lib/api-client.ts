@@ -33,30 +33,81 @@ export function getToken(): string | null {
   return authToken
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken()
-  const res = await fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers || {}),
-    },
-    credentials: "include",
-  })
-  if (res.status === 401) {
-    setToken(null)
-    throw new ApiError("UNAUTHORIZED", 401)
+// ---- Network resilience -----------------------------------------------------
+// Transient failures (server hiccup, proxy idle timeout, laptop sleep, network
+// switch) must NOT leave views stuck on a permanent "Failed to fetch" state.
+// Every request gets a hard timeout, and idempotent requests are retried
+// automatically with backoff before surfacing an error to the UI.
+const REQUEST_TIMEOUT_MS = 15000
+const MAX_RETRIES = 2
+
+function delay(ms: number) {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+function isTransientStatus(status: number) {
+  // 502/503/504 = gateway/proxy issues where the request never reached the app
+  return status === 502 || status === 503 || status === 504
+}
+
+function networkErrorMessage(): string {
+  // api-client is framework-free; read the locale the store persisted.
+  let locale = "es"
+  try {
+    locale = window.localStorage.getItem("servehub_locale") || "es"
+  } catch {}
+  return locale === "en"
+    ? "Could not reach the server. Check your connection and try again."
+    : "No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo."
+}
+
+async function apiFetch<T>(path: string, init?: RequestInit, attempt = 0): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase()
+  const idempotent = method === "GET" || method === "HEAD"
+  const canRetry = attempt < MAX_RETRIES && (idempotent || init?.body === undefined)
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    const token = getToken()
+    const res = await fetch(path, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers || {}),
+      },
+      credentials: "include",
+    })
+    if (res.status === 401) {
+      setToken(null)
+      throw new ApiError("UNAUTHORIZED", 401)
+    }
+    if (isTransientStatus(res.status) && attempt < MAX_RETRIES) {
+      await delay(400 * 2 ** attempt)
+      return apiFetch<T>(path, init, attempt + 1)
+    }
+    if (!res.ok) {
+      let msg = `Error ${res.status}`
+      try {
+        const j = await res.json()
+        msg = j.error || msg
+      } catch {}
+      throw new ApiError(msg, res.status)
+    }
+    return res.json() as Promise<T>
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    // Network-level failure (DNS, refused, offline, our timeout abort)
+    if (canRetry) {
+      await delay(400 * 2 ** attempt)
+      return apiFetch<T>(path, init, attempt + 1)
+    }
+    throw new ApiError(networkErrorMessage(), 0)
+  } finally {
+    clearTimeout(timer)
   }
-  if (!res.ok) {
-    let msg = `Error ${res.status}`
-    try {
-      const j = await res.json()
-      msg = j.error || msg
-    } catch {}
-    throw new ApiError(msg, res.status)
-  }
-  return res.json() as Promise<T>
 }
 
 export class ApiError extends Error {

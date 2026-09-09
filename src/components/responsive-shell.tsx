@@ -283,7 +283,7 @@ export function ResponsiveShell({ children }: { children: React.ReactNode }) {
 
       {/* Main content */}
       <main className="flex-1 lg:pl-64 pb-20 lg:pb-0">
-        <div className="mx-auto w-full max-w-7xl p-4 lg:p-6">{children}</div>
+        <div className="@container mx-auto w-full max-w-7xl p-4 lg:p-6">{children}</div>
       </main>
 
       {/* Mobile bottom navigation */}
