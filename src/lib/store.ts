@@ -62,6 +62,16 @@ function interpolate(template: string, vars?: Record<string, string | number>): 
   return template.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? `{${k}}`))
 }
 
+// Factory so that changing locale produces a NEW `t` reference — every
+// component subscribed to `s.t` re-renders when the language changes.
+function makeT(locale: Locale) {
+  return (key: TranslationKey, vars?: Record<string, string | number>) => {
+    const dict = translations[locale] || translations.es
+    const tmpl = (dict as Record<string, string>)[key] ?? (translations.es as Record<string, string>)[key] ?? key
+    return interpolate(tmpl, vars)
+  }
+}
+
 export const useApp = create<AppState>((set, get) => ({
   booted: false,
   config: null,
@@ -119,15 +129,10 @@ export const useApp = create<AppState>((set, get) => ({
 
   locale: "es",
   setLocale: (l) => {
-    set({ locale: l })
+    set({ locale: l, t: makeT(l) })
     if (typeof window !== "undefined") window.localStorage.setItem("servehub_locale", l)
   },
-  t: (key, vars) => {
-    const state = get()
-    const dict = translations[state.locale] || translations.es
-    const tmpl = (dict as Record<string, string>)[key] ?? (translations.es as Record<string, string>)[key] ?? key
-    return interpolate(tmpl, vars)
-  },
+  t: makeT("es"),
 
   view: "dashboard",
   setView: (v) => set({ view: v }),
@@ -144,7 +149,7 @@ export const useApp = create<AppState>((set, get) => ({
 // Initialize locale from localStorage on client
 if (typeof window !== "undefined") {
   const saved = window.localStorage.getItem("servehub_locale") as Locale | null
-  if (saved === "es" || saved === "en") useApp.setState({ locale: saved })
+  if (saved === "es" || saved === "en") useApp.setState({ locale: saved, t: makeT(saved) })
 }
 
 // Helper hook for components
