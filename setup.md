@@ -1,576 +1,160 @@
-ServeHUB Web — Guía de instalación, desarrollo local y GitHub
+# ServeHUB — Configuración del entorno local
 
-Esta guía explica cómo preparar ServeHUB Web desde cero en Windows, ejecutarlo en localhost, comprobar que funciona y subir cambios a GitHub.
+Guía para configurar ServeHUB desde cero en una PC nueva y ejecutar la aplicación en localhost.
 
-Stack detectado en el proyecto: Next.js, TypeScript, Tailwind CSS, Prisma, SQLite y Bun.
-El proyecto también contiene un servicio realtime basado en Socket.IO/Bun dentro de mini-services/realtime.
+---
 
-1. Requisitos
+## 1. Requisitos
 
-Necesitas:
+Instalar:
 
-Windows 10/11
+- Git
+- Bun
 
-Git
+Node.js no es necesario para el flujo principal del proyecto, ya que se utiliza Bun.
 
-Node.js (recomendado como respaldo para herramientas que lo requieran)
+### Verificar Git
 
-Bun
+Abrir PowerShell y ejecutar:
 
-Un navegador moderno
-
-El repositorio de ServeHUB Web
-
-Comprobar Git
-
-Abre PowerShell y ejecuta:
+```powershell
 
 git --version
-
-Comprobar Node.js
-
-node --version
-npm --version
-
-Comprobar Bun
-
+Verificar Bun
 bun --version
 
-Si Bun no está instalado en Windows, desde PowerShell:
+Si Bun no está instalado, ejecutar en PowerShell:
 
 powershell -c "irm bun.sh/install.ps1 | iex"
 
-Después cierra y vuelve a abrir VS Code/PowerShell y comprueba:
+Cerrar y volver a abrir PowerShell o VS Code después de la instalación.
+
+Comprobar nuevamente:
 
 bun --version
-
 2. Obtener el proyecto
 
-Si todavía no tienes el repositorio:
+Clonar el repositorio:
 
 git clone https://github.com/jeremiasdeveloper/ServeHubWeb.git
 
-Entra en la carpeta:
+Entrar en la carpeta:
 
 cd ServeHubWeb
 
-Si ya tienes el proyecto localmente, abre PowerShell en la carpeta raíz del proyecto.
+Si el proyecto ya fue descargado/copiadо a la PC, simplemente abrir una terminal en la carpeta raíz del proyecto.
 
-Por ejemplo:
-
-C:\Users\JeremiasDev\Desktop\ServeHUB Web Version\main
-
-Comprueba la ubicación:
+Comprobar la ubicación:
 
 pwd
 
+La carpeta raíz debe contener archivos como:
+
+package.json
+bun.lock
+prisma/
+src/
+public/
+.env.example
 3. Instalar dependencias
 
-ServeHUB Web contiene bun.lock, por lo que Bun es el gestor de paquetes recomendado.
-
-Ejecuta:
+Desde la raíz del proyecto ejecutar:
 
 bun install
 
-Esto instala las dependencias definidas en package.json.
+Esperar a que Bun termine de instalar todas las dependencias.
 
-Si termina correctamente, no necesitas ejecutar npm install.
+4. Configurar las variables de entorno
 
-4. Variables de entorno
+El proyecto utiliza un archivo .env.example como plantilla.
 
-El proyecto incluye:
-
-.env.example
-
-Este archivo sirve como plantilla.
-
-Copia el archivo:
+Crear el archivo .env:
 
 Copy-Item .env.example .env
 
-Ahora abre .env y completa las variables necesarias.
+La configuración local actual utiliza SQLite:
 
-Puedes abrirlo desde VS Code:
-
-code .env
-
+DATABASE_URL=file:./db/custom.db
 Importante
 
-Nunca subas .env a GitHub.
+No modificar .env.example con credenciales reales.
 
-El archivo .env puede contener:
+No subir .env a GitHub.
 
-contraseñas
+El archivo .env es local y está destinado a contener la configuración privada de cada entorno.
 
-secretos
+5. Preparar Prisma
 
-claves privadas
-
-tokens
-
-URLs de servicios privados
-
-credenciales de bases de datos
-
-El proyecto ya incluye .gitignore, por lo que .env debería quedar fuera del repositorio.
-
-Sí puedes subir:
-
-.env.example
-
-porque debe contener únicamente valores de ejemplo o nombres de variables sin secretos reales.
-
-5. Revisar los scripts disponibles
-
-Antes de iniciar el proyecto, puedes consultar los scripts definidos en package.json:
-
-Get-Content package.json
-
-Busca la sección:
-
-"scripts": {
-  ...
-}
-
-El script habitual de desarrollo de Next.js es:
-
-dev
-
-Si existe:
-
-"dev": "next dev"
-
-puedes iniciar la aplicación con:
-
-bun run dev
-
-6. Preparar Prisma y la base de datos
-
-ServeHUB Web utiliza Prisma y contiene:
-
-prisma/
-└── schema.prisma
-
-Primero genera el cliente de Prisma:
+Generar el cliente de Prisma:
 
 bunx prisma generate
+6. Crear la base de datos local
 
-Si el proyecto utiliza una base de datos local SQLite y la variable DATABASE_URL está configurada correctamente en .env, normalmente puedes sincronizar el esquema con:
+Crear/sincronizar la base de datos SQLite:
 
 bunx prisma db push
 
-Si el proyecto utiliza migraciones en lugar de db push, consulta los scripts de package.json y usa el comando definido por el proyecto.
+El comando debería indicar algo similar a:
 
-Para comprobar visualmente la base de datos mediante Prisma Studio:
+SQLite database custom.db created
+Your database is now in sync with your Prisma schema.
 
-bunx prisma studio
+La base de datos será local y utilizará:
 
-7. Cargar datos iniciales
+file:./db/custom.db
+7. Cargar los datos de demostración
 
-El proyecto contiene scripts de seed, incluyendo:
+El proyecto incluye un script de seed para crear los roles, usuarios, mesas y pedidos iniciales.
 
-scripts/seed.ts
-src/lib/seed.ts
+Ejecutar:
 
-Antes de ejecutar un seed, revisa los scripts de package.json para conocer el comando oficial configurado para este proyecto.
+bun run scripts/seed.ts
 
-Puedes consultar:
+El script crea los usuarios de demostración.
 
-Get-Content package.json
+Credenciales de demostración
 
-Si existe un script, por ejemplo:
+Todos utilizan la contraseña:
 
-"db:seed": "..."
+0000
 
-ejecútalo con:
+Usuarios disponibles:
 
-bun run db:seed
+admin      / 0000
+manager01  / 0000
+waiter01   / 0000
+waiter02   / 0000
+kitchen01  / 0000
+cashier01  / 0000
+8. Iniciar ServeHUB
 
-No ejecutes un seed repetidamente en una base de datos real sin comprobar antes si el proceso es idempotente.
+Ejecutar:
 
-8. Iniciar ServeHUB Web en localhost
+bunx next dev -p 3000
 
-Desde la raíz del proyecto:
+En Windows se utiliza este comando directamente porque el script dev del proyecto utiliza tee, un comando que puede no estar disponible en PowerShell.
 
-bun run dev
-
-Next.js debería mostrar una dirección local similar a:
+Cuando Next.js esté listo, aparecerá una dirección similar a:
 
 http://localhost:3000
 
-Abre en el navegador:
+Abrir en el navegador:
 
 http://localhost:3000
+9. Iniciar sesión
 
-Si el puerto 3000 está ocupado, Next.js puede seleccionar otro puerto, por ejemplo:
+Utilizar cualquiera de las cuentas de demostración.
 
-http://localhost:3001
+Ejemplo:
 
-Usa siempre la URL que aparezca en la terminal.
+Usuario: admin
+Contraseña: 0000
 
-9. Detener el servidor
+Si la base de datos fue creada y el seed fue ejecutado correctamente, el login debería funcionar.
 
-En la terminal donde está ejecutándose Next.js:
+10. Orden completo de instalación
 
-Ctrl + C
-
-Esto detiene el servidor de desarrollo.
-
-10. Reiniciar el proyecto después
-
-En una sesión posterior normalmente basta con:
-
-cd "C:\Users\JeremiasDev\Desktop\ServeHUB Web Version\main"
-bun install
-bun run dev
-
-Si las dependencias y la configuración ya están preparadas, incluso puede bastar con:
-
-bun run dev
-
-11. Servicio Realtime
-
-El proyecto contiene:
-
-mini-services/
-└── realtime/
-    ├── index.ts
-    ├── package.json
-    ├── bun.lock
-    └── tsconfig.json
-
-Esto indica que existe un servicio realtime independiente.
-
-Primero revisa su package.json:
-
-Get-Content .\mini-services\realtime\package.json
-
-Si necesita instalar dependencias de forma independiente:
-
-cd .\mini-services\realtime
-bun install
-
-Luego revisa los scripts disponibles:
-
-Get-Content package.json
-
-y utiliza el script de desarrollo correspondiente.
-
-Para volver a la raíz:
-
-cd ..\..
-
-El frontend de Next.js y el servicio realtime pueden necesitar ejecutarse en terminales separadas. Usa los comandos definidos en los respectivos package.json.
-
-12. Comprobar que la aplicación funciona
-
-Una vez iniciado el frontend, prueba al menos:
-
-Carga inicial / splash
-
-Login
-
-Navegación entre módulos
-
-Dashboard
-
-Empleados
-
-Roles y permisos
-
-Pedidos
-
-Mesas
-
-Notificaciones
-
-Chat
-
-Atención al cliente
-
-Reclamos
-
-Asistencia
-
-Configuración
-
-Cambio de idioma
-
-Cambio de tema
-
-Vista responsive
-
-Funciones realtime si el servicio está habilitado
-
-También revisa la consola del navegador:
-
-F12 → Console
-
-y la terminal donde ejecutaste:
-
-bun run dev
-
-13. Comprobar el proyecto antes de subir cambios
-
-Antes de hacer commit, revisa el estado:
-
-git status
-
-Comprueba que NO aparezcan archivos secretos, especialmente:
-
-.env
-
-Puedes revisar los archivos ignorados con:
-
-git status --ignored
-
-14. Ejecutar comprobaciones de código
-
-Revisa los scripts disponibles:
-
-Get-Content package.json
-
-Si existen scripts como:
-
-"lint": "..."
-"build": "..."
-"typecheck": "..."
-"test": "..."
-
-ejecútalos antes de subir cambios.
-
-Ejemplos:
-
-bun run lint
-
-bun run build
-
-bun run test
-
-Usa únicamente los scripts que realmente existan en package.json.
-
-15. Guardar cambios con Git
-
-Después de comprobar la aplicación:
-
-git status
-
-Añade los cambios:
-
-git add .
-
-Comprueba nuevamente:
-
-git status
-
-Crea el commit:
-
-git commit -m "Describe los cambios realizados"
-
-Ejemplos:
-
-git commit -m "fix: corregir login"
-
-git commit -m "feat: agregar módulo de pedidos"
-
-16. Subir cambios a GitHub
-
-Comprueba la rama:
-
-git branch
-
-Si estás en main:
-
-git push origin main
-
-Para configurar el upstream la primera vez:
-
-git push -u origin main
-
-17. Configurar correctamente el autor de Git
-
-Para que los commits nuevos aparezcan con tu identidad:
-
-git config --global user.name "JeremiasDev"
-
-Configura el email asociado a tu cuenta de GitHub:
-
-git config --global user.email "TU_EMAIL_DE_GITHUB"
-
-Comprueba:
-
-git config --global user.name
-git config --global user.email
-
-También puedes configurar la identidad únicamente para este repositorio:
-
-git config user.name "JeremiasDev"
-git config user.email "TU_EMAIL_DE_GITHUB"
-
-Importante sobre commits antiguos
-
-Cambiar git config no cambia los autores de commits que ya existen.
-
-Los commits creados anteriormente con otra identidad conservarán su autor, a menos que se reescriba el historial.
-
-18. Flujo normal de trabajo
-
-A partir de ahora, el flujo recomendado es:
-
-Iniciar el proyecto
-
-bun install
-bun run dev
-
-Programar
-
-Realiza tus cambios en VS Code.
-
-Comprobar
-
-git status
-
-Luego ejecuta los scripts de lint/build/test que existan en package.json.
-
-Guardar
-
-git add .
-git commit -m "Descripción de los cambios"
-
-Subir
-
-git push
-
-19. Solución rápida a problemas comunes
-
-bun no se reconoce
-
-Instala Bun:
-
-powershell -c "irm bun.sh/install.ps1 | iex"
-
-Cierra y vuelve a abrir la terminal.
-
-Comprueba:
-
-bun --version
-
-bun install falla
-
-Primero comprueba:
-
-bun --version
-
-y:
-
-Get-Content package.json
-
-Si el error menciona una dependencia concreta, revisa el mensaje antes de borrar archivos o modificar el lockfile.
-
-bun run dev falla
-
-Comprueba:
-
-Get-Content package.json
-
-y confirma que exista el script:
-
-dev
-
-También comprueba que .env exista y tenga las variables requeridas.
-
-Error de Prisma
-
-Comprueba:
-
-bunx prisma generate
-
-y:
-
-bunx prisma db push
-
-Si el problema está relacionado con DATABASE_URL, revisa .env.
-
-Puerto 3000 ocupado
-
-Puedes comprobar procesos/puertos en PowerShell o simplemente iniciar Next.js y utilizar el puerto alternativo que indique la terminal.
-
-Cambios que no aparecen en Git
-
-Comprueba:
-
-git status
-
-Si un archivo está incluido en .gitignore, Git puede estar ignorándolo intencionalmente.
-
-20. Seguridad antes de publicar
-
-Antes de subir el proyecto a GitHub, verifica especialmente:
-
-.env NO debe estar en Git.
-
-No subir contraseñas.
-
-No subir tokens.
-
-No subir API keys privadas.
-
-No subir certificados privados.
-
-No subir archivos de bases de datos que contengan información sensible.
-
-Revisar scripts antes de ejecutarlos.
-
-Revisar el contenido de README.md.
-
-Revisar que .gitignore cubra los archivos locales.
-
-Puedes comprobar si Git está siguiendo .env:
-
-git ls-files .env
-
-Si no devuelve nada, .env no está siendo rastreado por Git.
-
-21. Estructura principal del proyecto
-
-La estructura actual incluye:
-
-ServeHUB Web
-│
-├── .zscripts/
-├── docs/
-├── download/
-├── examples/
-├── mini-services/
-│   └── realtime/
-├── prisma/
-│   └── schema.prisma
-├── public/
-├── scripts/
-├── src/
-│   ├── app/
-│   │   └── api/
-│   ├── components/
-│   ├── hooks/
-│   └── lib/
-├── tests/
-├── .env.example
-├── .gitignore
-├── bun.lock
-├── Caddyfile
-├── components.json
-├── eslint.config.mjs
-├── LICENSE
-├── next.config.ts
-├── package.json
-├── postcss.config.mjs
-├── README.md
-├── tailwind.config.ts
-└── tsconfig.json
-
-22. Comandos esenciales — resumen
-
-Primera instalación
+En una PC nueva, el flujo completo es:
 
 git clone https://github.com/jeremiasdeveloper/ServeHubWeb.git
 cd ServeHubWeb
@@ -578,42 +162,75 @@ bun install
 Copy-Item .env.example .env
 bunx prisma generate
 bunx prisma db push
-bun run dev
+bun run scripts/seed.ts
+bunx next dev -p 3000
 
-Luego abre:
+Después abrir:
+
+http://localhost:3000
+11. Si ya existe la base de datos
+
+Si prisma db push indica que la base de datos ya existe y está sincronizada, no es necesario recrearla.
+
+Si los usuarios de demostración ya existen, tampoco es necesario ejecutar el seed nuevamente.
+
+12. Solución de problemas
+Bun no se reconoce
+
+Si aparece:
+
+bun : The term 'bun' is not recognized...
+
+Instalar Bun:
+
+powershell -c "irm bun.sh/install.ps1 | iex"
+
+Cerrar y abrir nuevamente la terminal.
+
+Comprobar:
+
+bun --version
+Error al ejecutar bun run dev
+
+En Windows, ejecutar directamente:
+
+bunx next dev -p 3000
+Error 401 Unauthorized al iniciar sesión
+
+Comprobar que la base de datos fue creada:
+
+bunx prisma db push
+
+Después ejecutar el seed:
+
+bun run scripts/seed.ts
+
+Volver a probar:
+
+admin / 0000
+Error relacionado con Prisma
+
+Ejecutar:
+
+bunx prisma generate
+
+y después:
+
+bunx prisma db push
+13. Detener el servidor
+
+Para detener Next.js:
+
+Ctrl + C
+14. Inicio posterior
+
+Una vez configurado el entorno, para iniciar ServeHUB en futuras sesiones normalmente basta con:
+
+cd ServeHubWeb
+bunx next dev -p 3000
+
+Abrir:
 
 http://localhost:3000
 
-Si el proyecto define scripts específicos para base de datos, seed o realtime, utiliza esos scripts según package.json.
-
-Trabajo diario
-
-bun install
-bun run dev
-
-Guardar cambios
-
-git status
-git add .
-git commit -m "Descripción del cambio"
-git push
-
-23. En caso de problemas
-
-Cuando algo falle, no borres node_modules, bun.lock, .git ni la base de datos automáticamente.
-
-Primero copia el error completo de la terminal y revisa:
-
-Qué comando ejecutaste.
-
-Qué archivo menciona el error.
-
-Si el error está relacionado con dependencias.
-
-Si falta alguna variable de .env.
-
-Si Prisma puede conectarse a la base de datos.
-
-Si otro servicio necesita estar ejecutándose.
-
-Esto permite solucionar el problema sin perder configuración o historial.
+No es necesario ejecutar nuevamente prisma db push ni el seed cada vez que se inicia el servidor.
