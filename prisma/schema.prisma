@@ -1,0 +1,242 @@
+// ServeHub — Prisma schema
+// SQLite database for restaurant operations (users, roles, orders, tables, chat, etc.)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Authentication, roles & permissions
+// ---------------------------------------------------------------------------
+
+model User {
+  id             String   @id @default(cuid())
+  username       String   @unique
+  passwordHash   String
+  displayName    String
+  email          String?
+  roleId         String
+  role           Role     @relation(fields: [roleId], references: [id])
+  active         Boolean  @default(true)
+  permissions    String   @default("[]") // JSON array of extra permission keys (override)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  lastLoginAt    DateTime?
+
+  sessions       Session[]
+  ordersCreated  Order[]  @relation("OrderCreatedBy")
+  ordersAssigned Order[]  @relation("OrderAssignedTo")
+  messages       Message[]
+  complaintsMade Complaint[] @relation("ComplaintCreatedBy")
+  complaintsAssignee Complaint[] @relation("ComplaintAssignedTo")
+  attendance     Attendance[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  conversations  ConversationParticipant[]
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isSystem    Boolean  @default(false) // system roles cannot be deleted
+  permissions String   @default("[]") // JSON array of permission keys
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+// ---------------------------------------------------------------------------
+// Tables & orders
+// ---------------------------------------------------------------------------
+
+model Table {
+  id           String        @id @default(cuid())
+  number       String        @unique
+  capacity     Int           @default(4)
+  status       String        @default("AVAILABLE") // AVAILABLE | OCCUPIED | RESERVED | NEEDS_CLEANING
+  location     String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  orders       Order[]
+}
+
+model Order {
+  id          String   @id @default(cuid())
+  number      Int      @unique
+  tableId     String
+  table       Table    @relation(fields: [tableId], references: [id])
+  createdById String
+  createdBy   User     @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  assignedToId String?
+  assignedTo  User?    @relation("OrderAssignedTo", fields: [assignedToId], references: [id])
+  status      String   @default("DRAFT") // DRAFT | SENT | RECEIVED | PREPARING | READY | DELIVERED | COMPLETED | CANCELLED
+  notes       String?
+  total       Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       OrderItem[]
+  history     OrderStatusHistory[]
+}
+
+model OrderItem {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  name      String
+  quantity  Int      @default(1)
+  price     Float    @default(0)
+  notes     String?
+  status    String   @default("PENDING") // PENDING | PREPARING | READY | SERVED
+  createdAt DateTime @default(now())
+}
+
+model OrderStatusHistory {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus  String
+  changedById String?
+  note      String?
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Complaints & customer service
+// ---------------------------------------------------------------------------
+
+model Complaint {
+  id           String   @id @default(cuid())
+  title        String
+  description  String
+  category     String   @default("GENERAL") // GENERAL | SERVICE | FOOD | WAIT_TIME | BILLING | OTHER
+  createdById  String
+  createdBy    User     @relation("ComplaintCreatedBy", fields: [createdById], references: [id])
+  assignedToId String?
+  assignedTo   User?    @relation("ComplaintAssignedTo", fields: [assignedToId], references: [id])
+  status       String   @default("OPEN") // OPEN | IN_PROGRESS | RESOLVED | CLOSED
+  priority     String   @default("NORMAL") // LOW | NORMAL | HIGH | URGENT
+  customerName String?
+  resolution   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model CustomerService {
+  id          String   @id @default(cuid())
+  subject     String
+  description String
+  channel     String   @default("IN_PERSON") // IN_PERSON | PHONE | EMAIL | ONLINE
+  customerName String?
+  customerContact String?
+  status      String   @default("OPEN") // OPEN | IN_PROGRESS | RESOLVED | CLOSED
+  assignedToId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+model Conversation {
+  id        String    @id @default(cuid())
+  name      String?
+  isGroup   Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+  participants ConversationParticipant[]
+}
+
+model ConversationParticipant {
+  id              String   @id @default(cuid())
+  conversationId  String
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  lastReadAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  @@unique([conversationId, userId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User     @relation(fields: [senderId], references: [id])
+  content        String
+  createdAt      DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Attendance & notifications
+// ---------------------------------------------------------------------------
+
+model Attendance {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  date      String   // YYYY-MM-DD
+  checkIn   DateTime?
+  checkOut  DateTime?
+  status    String   @default("PRESENT") // PRESENT | ABSENT | LATE | HALF_DAY | LEAVE
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, date])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // ORDER_READY | NEW_ORDER | NEW_MESSAGE | COMPLAINT_ASSIGNED | SYSTEM
+  title     String
+  body      String
+  data      String?  // JSON string with extra context
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Settings, audit
+// ---------------------------------------------------------------------------
+
+model RestaurantSetting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String?
+  entityId  String?
+  details   String?
+  ip        String?
+  createdAt DateTime @default(now())
+}
