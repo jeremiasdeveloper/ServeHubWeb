@@ -18,7 +18,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Plus, ClipboardList, Utensils, ChefHat, CheckCircle2, XCircle, History, Send, Trash2 } from "lucide-react"
+import { Plus, ClipboardList, Utensils, ChefHat, CheckCircle2, XCircle, History, Send, Trash2, FileDown } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useRealtime } from "@/lib/use-realtime"
@@ -32,6 +32,7 @@ const FILTERS = [
 
 export function OrdersView() {
   const t = useApp((s) => s.t)
+  const config = useApp((s) => s.config)
   const { can } = usePermissions()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -76,6 +77,32 @@ export function OrdersView() {
     return f.statuses.includes(o.status)
   })
 
+  // PDF export — jsPDF is loaded lazily on first use (keeps the main
+  // bundle small); generation happens fully client-side.
+  const exportOrdersToPdf = async (list: OrderInfo[]) => {
+    if (list.length === 0) {
+      toast.info(t("pdf.exportEmpty"))
+      return
+    }
+    try {
+      const mod = await import("@/lib/order-pdf")
+      mod.exportOrdersPdf(list, config, t)
+      toast.success(t("pdf.exported"))
+    } catch {
+      toast.error(t("errors.unknown"))
+    }
+  }
+
+  const exportOrderToPdf = async (o: OrderInfo) => {
+    try {
+      const mod = await import("@/lib/order-pdf")
+      mod.exportOrderPdf(o, config, t)
+      toast.success(t("pdf.exported"))
+    } catch {
+      toast.error(t("errors.unknown"))
+    }
+  }
+
   const transition = async (order: OrderInfo, to: string) => {
     try {
       await api.transitionOrder(order.id, to)
@@ -99,14 +126,19 @@ export function OrdersView() {
         title={t("orders.title")}
         description={`${orders.length} ${t("orders.title").toLowerCase()}`}
         action={
-          can("orders.create") && (
-            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-              <DialogTrigger asChild>
-                <Button><Plus className="h-4 w-4 mr-2" /> {t("orders.new")}</Button>
-              </DialogTrigger>
-              <CreateOrderDialog tables={tables} onClose={() => setCreateOpen(false)} onCreated={() => load()} />
-            </Dialog>
-          )
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={() => exportOrdersToPdf(filtered)} aria-label={t("pdf.exportAll")}>
+              <FileDown className="h-4 w-4 mr-2" /> {t("pdf.exportAll")}
+            </Button>
+            {can("orders.create") && (
+              <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+                <DialogTrigger asChild>
+                  <Button><Plus className="h-4 w-4 mr-2" /> {t("orders.new")}</Button>
+                </DialogTrigger>
+                <CreateOrderDialog tables={tables} onClose={() => setCreateOpen(false)} onCreated={() => load()} />
+              </Dialog>
+            )}
+          </div>
         }
       />
 
@@ -132,6 +164,7 @@ export function OrdersView() {
               order={o}
               onTransition={(to) => transition(o, to)}
               onOpen={() => setSelected(o)}
+              onExportPdf={() => exportOrderToPdf(o)}
               can={can}
               t={t}
             />
@@ -150,6 +183,7 @@ export function OrdersView() {
                 const r = await api.order(selected.id)
                 setSelected(r.order)
               }}
+              onExportPdf={() => exportOrderToPdf(selected)}
               can={can}
               t={t}
             />
@@ -160,10 +194,11 @@ export function OrdersView() {
   )
 }
 
-function OrderCard({ order, onTransition, onOpen, can, t }: {
+function OrderCard({ order, onTransition, onOpen, onExportPdf, can, t }: {
   order: OrderInfo
   onTransition: (to: string) => void
   onOpen: () => void
+  onExportPdf: () => void
   can: (p: string) => boolean
   t: ReturnType<typeof useApp.getState>["t"]
 }) {
@@ -205,6 +240,9 @@ function OrderCard({ order, onTransition, onOpen, can, t }: {
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
           <div className="text-sm font-bold">${order.total.toFixed(2)}</div>
           <div className="flex flex-wrap justify-end gap-1.5">
+            <Button variant="ghost" size="sm" onClick={onExportPdf} className="px-2" title={t("pdf.exportOne")} aria-label={t("pdf.exportOne")}>
+              <FileDown className="h-3.5 w-3.5 sm:mr-1" /> <span className="hidden sm:inline">PDF</span>
+            </Button>
             <Button variant="ghost" size="sm" onClick={onOpen} className="px-2">
               <History className="h-3.5 w-3.5 sm:mr-1" /> <span className="hidden sm:inline">{t("orders.orderDetails")}</span>
             </Button>
@@ -236,10 +274,11 @@ function OrderCard({ order, onTransition, onOpen, can, t }: {
   )
 }
 
-function OrderDetail({ order, onTransition, onRefresh, can, t }: {
+function OrderDetail({ order, onTransition, onRefresh, onExportPdf, can, t }: {
   order: OrderInfo
   onTransition: (to: string) => void
   onRefresh: () => Promise<void>
+  onExportPdf: () => void
   can: (p: string) => boolean
   t: ReturnType<typeof useApp.getState>["t"]
 }) {
@@ -307,6 +346,9 @@ function OrderDetail({ order, onTransition, onRefresh, can, t }: {
       </ScrollArea>
 
       <DialogFooter className="flex-wrap gap-2">
+        <Button variant="outline" onClick={onExportPdf} title={t("pdf.exportOne")} aria-label={t("pdf.exportOne")}>
+          <FileDown className="h-4 w-4 mr-2" /> PDF
+        </Button>
         {next.map((to) => {
           const perm = TRANSITION_PERMISSIONS[`${order.status}->${to}`]
           if (perm && !can(perm)) return null

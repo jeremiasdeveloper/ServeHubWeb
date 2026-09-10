@@ -15,7 +15,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Switch } from "@/components/ui/switch"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Plus, Users, UserPlus, Pencil } from "lucide-react"
+import { Plus, Users, UserPlus, Pencil, ShieldAlert } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 
@@ -117,13 +117,13 @@ export function EmployeesView() {
         </div>
       )}
 
-      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent>
-          {editing && (
-            <EmployeeDialog roles={roles} employee={editing} onClose={() => setEditing(null)} onSaved={load} />
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Edit dialog — EmployeeDialog brings its own DialogContent (with
+          accessible title), so it must NOT be wrapped in another one. */}
+      {editing && (
+        <Dialog open onOpenChange={(o) => !o && setEditing(null)}>
+          <EmployeeDialog roles={roles} employee={editing} onClose={() => setEditing(null)} onSaved={load} />
+        </Dialog>
+      )}
     </div>
   )
 }
@@ -141,8 +141,16 @@ function EmployeeDialog({ roles, employee, onClose, onSaved }: {
   const [roleId, setRoleId] = useState(employee?.roleId ?? roles[0]?.id ?? "")
   const [password, setPassword] = useState("")
   const [saving, setSaving] = useState(false)
+  const [adminConfirmOpen, setAdminConfirmOpen] = useState(false)
 
-  const submit = async () => {
+  // Promoting a user to Administrator requires an explicit, professional
+  // confirmation — signing in as admin is NOT warned about anymore.
+  const selectedRole = roles.find((r) => r.id === roleId)
+  const targetsAdmin = !!selectedRole && selectedRole.name.toLowerCase() === "administrator"
+  const wasAdmin = !!employee && employee.role.name.toLowerCase() === "administrator"
+  const needsAdminConfirm = targetsAdmin && !wasAdmin
+
+  const save = async () => {
     if (!displayName.trim() || !roleId) return
     if (!employee && (!username.trim() || !password)) return
     setSaving(true)
@@ -166,6 +174,11 @@ function EmployeeDialog({ roles, employee, onClose, onSaved }: {
     } finally {
       setSaving(false)
     }
+  }
+
+  const requestSave = () => {
+    if (needsAdminConfirm) setAdminConfirmOpen(true)
+    else save()
   }
 
   return (
@@ -205,8 +218,38 @@ function EmployeeDialog({ roles, employee, onClose, onSaved }: {
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button onClick={submit} disabled={saving || !displayName.trim() || (!employee && (!username.trim() || !password))}>{t("common.save")}</Button>
+        <Button onClick={requestSave} disabled={saving || !displayName.trim() || (!employee && (!username.trim() || !password))}>
+          {targetsAdmin && <ShieldAlert className="h-4 w-4 mr-2" />}
+          {t("common.save")}
+        </Button>
       </DialogFooter>
+
+      {/* Administrator promotion confirmation */}
+      <Dialog open={adminConfirmOpen} onOpenChange={setAdminConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100">
+                <ShieldAlert className="h-5 w-5 text-amber-600" />
+              </span>
+              {t("admin.promoTitle")}
+            </DialogTitle>
+            <DialogDescription className="pt-1 text-left leading-relaxed">
+              <span className="font-semibold text-foreground">{t("admin.promoHighlight")}</span>{" "}
+              {t("admin.promoBody", { name: displayName.trim() || username.trim() })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            {t("admin.promoNote")}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdminConfirmOpen(false)}>{t("common.cancel")}</Button>
+            <Button onClick={() => { setAdminConfirmOpen(false); save() }} disabled={saving}>
+              {t("admin.promoConfirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DialogContent>
   )
 }

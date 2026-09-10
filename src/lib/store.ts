@@ -30,10 +30,7 @@ interface AppState {
   // auth
   user: CurrentUser | null
   authLoading: boolean
-  pendingAdmin: CurrentUser | null
-  login: (u: string, p: string) => Promise<{ needsAdminWarning: boolean }>
-  commitPendingAdmin: () => void
-  cancelPendingAdmin: () => void
+  login: (u: string, p: string) => Promise<void>
   logout: () => Promise<void>
   refreshMe: () => Promise<void>
 
@@ -72,7 +69,7 @@ function makeT(locale: Locale) {
   }
 }
 
-export const useApp = create<AppState>((set, get) => ({
+export const useApp = create<AppState>((set) => ({
   booted: false,
   config: null,
   bootError: null,
@@ -87,26 +84,10 @@ export const useApp = create<AppState>((set, get) => ({
 
   user: null,
   authLoading: true,
-  pendingAdmin: null,
   login: async (username, password) => {
     const { user, token } = await api.login(username, password)
-    if (user.isAdmin) {
-      // hold the token but don't commit user until the admin warning is acknowledged
-      setToken(token)
-      set({ pendingAdmin: user })
-      return { needsAdminWarning: true }
-    }
     setToken(token)
     set({ user })
-    return { needsAdminWarning: false }
-  },
-  commitPendingAdmin: () => {
-    const pending = get().pendingAdmin
-    if (pending) set({ user: pending, pendingAdmin: null })
-  },
-  cancelPendingAdmin: () => {
-    setToken(null)
-    set({ pendingAdmin: null })
   },
   logout: async () => {
     try { await api.logout() } catch {}
@@ -114,7 +95,7 @@ export const useApp = create<AppState>((set, get) => ({
     // tear down the realtime socket (lazy import to avoid cycles)
     const { releaseSocket } = await import("./use-realtime")
     releaseSocket()
-    set({ user: null, pendingAdmin: null, view: "dashboard", realtimeConnected: false })
+    set({ user: null, view: "dashboard", realtimeConnected: false })
   },
   refreshMe: async () => {
     if (!getToken()) { set({ user: null, authLoading: false }); return }
@@ -150,6 +131,12 @@ export const useApp = create<AppState>((set, get) => ({
 if (typeof window !== "undefined") {
   const saved = window.localStorage.getItem("servehub_locale") as Locale | null
   if (saved === "es" || saved === "en") useApp.setState({ locale: saved, t: makeT(saved) })
+
+  // Session expired / revoked anywhere in the app → return to the login
+  // screen gracefully (the api-client clears the token before emitting).
+  window.addEventListener("servehub:unauthorized", () => {
+    useApp.setState({ user: null, view: "dashboard", authLoading: false })
+  })
 }
 
 // Helper hook for components

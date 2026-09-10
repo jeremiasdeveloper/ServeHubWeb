@@ -80,20 +80,30 @@ async function apiFetch<T>(path: string, init?: RequestInit, attempt = 0): Promi
       },
       credentials: "include",
     })
-    if (res.status === 401) {
-      setToken(null)
-      throw new ApiError("UNAUTHORIZED", 401)
-    }
     if (isTransientStatus(res.status) && attempt < MAX_RETRIES) {
       await delay(400 * 2 ** attempt)
       return apiFetch<T>(path, init, attempt + 1)
     }
     if (!res.ok) {
+      // Surface the server's own error message whenever it provides one.
       let msg = `Error ${res.status}`
       try {
         const j = await res.json()
         msg = j.error || msg
       } catch {}
+      if (res.status === 401) {
+        // The login endpoint also answers 401 (wrong credentials): in that
+        // case the server message must reach the UI and the stored token
+        // must NOT be touched. For every other endpoint a 401 means the
+        // session expired or was revoked → clear it and let the app return
+        // to the login screen gracefully instead of getting stuck.
+        if (!path.startsWith("/api/auth/login")) {
+          setToken(null)
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("servehub:unauthorized"))
+          }
+        }
+      }
       throw new ApiError(msg, res.status)
     }
     return res.json() as Promise<T>
