@@ -20,6 +20,7 @@
 import { useEffect, useRef } from "react"
 import { io, type Socket } from "socket.io-client"
 import { useApp } from "./store"
+import { getRealtimeUrl } from "./connection"
 
 export interface RealtimeEvent {
   type: "order.created" | "order.updated" | "order.ready" | "order.delivered" | "message.created" | "notification.created"
@@ -70,7 +71,11 @@ function acquireSocket(userId: string): Socket {
   // user changed (login as someone else) — tear down previous socket
   releaseSocket()
 
-  const socket = io("/?XTransformPort=3003", {
+  // Web build reaches realtime through the same-origin proxy; packaged
+  // remote clients (Android) connect straight to the server's realtime port.
+  const realtimeUrl = getRealtimeUrl()
+  const sameOrigin = realtimeUrl === "/"
+  const socket = io(sameOrigin ? "/?XTransformPort=3003" : realtimeUrl, {
     path: "/",
     transports: ["websocket", "polling"],
     reconnection: true,

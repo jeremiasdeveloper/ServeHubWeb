@@ -12,14 +12,16 @@ export async function GET(req: Request) {
   if (!user) return Response.json({ error: "No autenticado" }, { status: 401 })
   if (!hasPermission(user, "developer.access")) return Response.json({ error: "No autorizado" }, { status: 403 })
 
-  const config = getConfig()
-  const tables = ["User", "Role", "Session", "Table", "Order", "OrderItem", "OrderStatusHistory", "Complaint", "CustomerService", "Conversation", "ConversationParticipant", "Message", "Attendance", "Notification", "RestaurantSetting", "AuditLog"]
+  const config = await getConfig()
+  const tables = ["User", "Role", "Session", "Table", "Order", "OrderItem", "OrderStatusHistory", "Complaint", "CustomerService", "Conversation", "ConversationParticipant", "Message", "Attendance", "Notification", "RestaurantSetting", "AuditLog", "MenuCategory", "MenuItem"]
+  // Prisma client property for each model (most are lowercased; compound
+  // names like MenuCategory become menuCategory).
+  const prismaModel: Record<string, string> = { MenuCategory: "menuCategory", MenuItem: "menuItem", OrderItem: "orderItem", OrderStatusHistory: "orderStatusHistory", ConversationParticipant: "conversationParticipant", CustomerService: "customerService", RestaurantSetting: "restaurantSetting", AuditLog: "auditLog" }
 
   const counts: Record<string, number> = {}
   for (const t of tables) {
     try {
-      // @ts-expect-error dynamic model access
-      counts[t] = await db[t.toLowerCase()].count()
+      counts[t] = await (db as unknown as Record<string, { count: () => Promise<number> }>)[prismaModel[t] ?? t.toLowerCase()].count()
     } catch {
       counts[t] = -1
     }

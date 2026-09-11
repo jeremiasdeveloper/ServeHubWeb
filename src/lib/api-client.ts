@@ -1,6 +1,8 @@
 // ServeHub — frontend API client
+import { getApiBase } from "./connection"
 import type {
   ServeHubConfig,
+  MenuCategoryInfo,
   CurrentUser,
   OrderInfo,
   TableInfo,
@@ -31,6 +33,30 @@ export function getToken(): string | null {
     authToken = window.localStorage.getItem("servehub_token")
   }
   return authToken
+}
+
+// ---- Offline read-only mode --------------------------------------------------
+// While the ServeHub server is unreachable, ALL write operations are blocked
+// (read-only mode). Reads keep working with whatever was already loaded in
+// the app state. A connectivity monitor sets this flag.
+let offlineMode = false
+
+export function setOfflineMode(v: boolean) {
+  offlineMode = v
+}
+
+export function isOfflineMode(): boolean {
+  return offlineMode
+}
+
+function offlineWriteMessage(): string {
+  let locale = "es"
+  try {
+    locale = window.localStorage.getItem("servehub_locale") || "es"
+  } catch {}
+  return locale === "en"
+    ? "You are offline. Previously synchronized information is available in read-only mode. Reconnect to continue working."
+    : "Estás sin conexión. Tu información sincronizada está disponible en modo solo lectura. Reconéctate para continuar trabajando."
 }
 
 // ---- Network resilience -----------------------------------------------------
@@ -64,13 +90,16 @@ function networkErrorMessage(): string {
 async function apiFetch<T>(path: string, init?: RequestInit, attempt = 0): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase()
   const idempotent = method === "GET" || method === "HEAD"
+  if (offlineMode && !idempotent) {
+    throw new ApiError(offlineWriteMessage(), 0)
+  }
   const canRetry = attempt < MAX_RETRIES && (idempotent || init?.body === undefined)
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
     const token = getToken()
-    const res = await fetch(path, {
+    const res = await fetch(`${getApiBase()}${path}`, {
       ...init,
       signal: controller.signal,
       headers: {
@@ -204,6 +233,34 @@ export const api = {
   settings: () => apiFetch<{ settings: Record<string, string> }>("/api/settings"),
   updateSettings: (data: Record<string, string>) => apiFetch<{ ok: boolean }>("/api/settings", { method: "PATCH", body: JSON.stringify(data) }),
 
+  // Menu
+  menu: () => apiFetch<{ categories: MenuCategoryInfo[] }>("/api/menu"),
+  createMenuCategory: (data: { name: string; sortOrder?: number }) =>
+    apiFetch<{ category: { id: string } }>("/api/menu/categories", { method: "POST", body: JSON.stringify(data) }),
+  updateMenuCategory: (id: string, data: { name?: string; sortOrder?: number; active?: boolean }) =>
+    apiFetch<{ ok: boolean }>(`/api/menu/categories/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  createMenuItem: (data: { name: string; categoryId: string; price: number; description?: string }) =>
+    apiFetch<{ item: { id: string } }>("/api/menu/items", { method: "POST", body: JSON.stringify(data) }),
+  updateMenuItem: (id: string, data: { name?: string; categoryId?: string; price?: number; description?: string | null; available?: boolean; active?: boolean }) =>
+    apiFetch<{ ok: boolean }>(`/api/menu/items/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  // Setup (first run)
+  setupStatus: () => apiFetch<{ needsSetup: boolean; serverId: string }>("/api/setup"),
+  completeSetup: (data: {
+    restaurant: { name: string; id?: string; logo?: string | null; tagline?: string }
+    branding: { primaryColor: string; secondaryColor: string; accentColor: string }
+    appearance: { font: string }
+    localization: { defaultLanguage: string }
+    admin: { username: string; password: string; displayName?: string }
+  }) => apiFetch<{ ok: boolean; serverId: string; restaurantId: string }>("/api/setup", { method: "POST", body: JSON.stringify(data) }),
+  updateConfig: (patch: Record<string, unknown>) =>
+    apiFetch<{ ok: boolean }>("/api/config", { method: "PATCH", body: JSON.stringify(patch) }),
+
+  // Backup
+  // GET /api/backup streams a binary file, so it bypasses the JSON client.
+  // Restore uploads multipart form data. Both are blocked while offline.
+  // Implementation lives below the api object.
+
   // Developer
   developer: () =>
     apiFetch<{
@@ -214,4 +271,41 @@ export const api = {
       roles: { name: string; permissions: string[] }[]
       environment: Record<string, string>
     }>("/api/developer"),
+}
+
+// ---- Backup file transfer (binary / multipart) ------------------------------
+export async function downloadBackup(): Promise<void> {
+  if (offlineMode) throw new ApiError(offlineWriteMessage(), 0)
+  const res = await fetch(`${getApiBase()}/api/backup`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+    credentials: "include",
+  })
+  if (!res.ok) throw new ApiError(`Error ${res.status}`, res.status)
+  const blob = await res.blob()
+  const match = res.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = match?.[1] ?? "servehub-backup.db"
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export async function restoreBackup(file: File): Promise<{ ok: boolean; note?: string }> {
+  if (offlineMode) throw new ApiError(offlineWriteMessage(), 0)
+  const form = new FormData()
+  form.set("file", file)
+  const res = await fetch(`${getApiBase()}/api/backup`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${getToken()}` },
+    body: form,
+  })
+  let msg = `Error ${res.status}`
+  try {
+    const j = await res.json()
+    if (j.note) return j
+    msg = j.error || msg
+  } catch {}
+  if (!res.ok) throw new ApiError(msg, res.status)
+  return { ok: true }
 }

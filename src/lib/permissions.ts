@@ -10,6 +10,7 @@ export const PERMISSIONS = [
   "orders.create",
   "orders.edit",
   "orders.send",
+  "orders.receive",
   "orders.prepare",
   "orders.ready",
   "orders.deliver",
@@ -24,7 +25,14 @@ export const PERMISSIONS = [
 
   // roles
   "roles.view",
+  "roles.create",
   "roles.edit",
+
+  // menu
+  "menu.view",
+  "menu.create",
+  "menu.edit",
+  "menu.disable",
 
   // complaints
   "complaints.view",
@@ -55,6 +63,11 @@ export const PERMISSIONS = [
   "settings.view",
   "settings.edit",
 
+  // audit / backup
+  "audit.view",
+  "backup.create",
+  "backup.restore",
+
   // developer / admin
   "admin.access",
   "developer.access",
@@ -62,14 +75,16 @@ export const PERMISSIONS = [
 
 export type Permission = (typeof PERMISSIONS)[number]
 
-// Default permission sets per system role.
+// Default permission sets per system role (Spanish names). English aliases
+// are kept so databases created by older builds keep resolving defaults.
 export const ROLE_PERMISSIONS: Record<string, string[]> = {
-  Administrator: [...PERMISSIONS],
-  Manager: [
+  Administrador: [...PERMISSIONS],
+  Gerente: [
     "dashboard.view",
-    "orders.view", "orders.create", "orders.edit", "orders.send", "orders.ready", "orders.deliver", "orders.complete", "orders.cancel",
+    "orders.view", "orders.create", "orders.edit", "orders.send", "orders.receive", "orders.ready", "orders.deliver", "orders.complete", "orders.cancel",
     "employees.view", "employees.create", "employees.edit",
     "roles.view",
+    "menu.view", "menu.create", "menu.edit", "menu.disable",
     "complaints.view", "complaints.create", "complaints.resolve",
     "customerService.view", "customerService.manage",
     "chat.view", "chat.send",
@@ -77,50 +92,67 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     "tables.view", "tables.edit",
     "notifications.view",
     "settings.view",
+    "audit.view",
     "admin.access",
   ],
   Supervisor: [
     "dashboard.view",
     "orders.view", "orders.create", "orders.edit", "orders.send", "orders.ready", "orders.deliver",
     "employees.view",
+    "menu.view",
     "complaints.view", "complaints.create",
     "chat.view", "chat.send",
     "attendance.view",
     "tables.view",
     "notifications.view",
   ],
-  Waiter: [
+  Mesero: [
     "dashboard.view",
     "orders.view", "orders.create", "orders.edit", "orders.send", "orders.deliver",
+    "menu.view",
     "chat.view", "chat.send",
     "attendance.self",
     "tables.view",
     "notifications.view",
     "complaints.create",
   ],
-  "Kitchen Staff": [
+  Cocina: [
     "dashboard.view",
-    "orders.view", "orders.prepare", "orders.ready",
+    "orders.view", "orders.receive", "orders.prepare", "orders.ready",
+    "menu.view",
     "chat.view", "chat.send",
     "attendance.self",
     "notifications.view",
   ],
-  Cashier: [
+  Cajero: [
     "dashboard.view",
     "orders.view", "orders.complete",
+    "menu.view",
     "chat.view", "chat.send",
     "attendance.self",
     "tables.view",
     "notifications.view",
     "complaints.create",
   ],
-  Employee: [
+  Empleado: [
     "dashboard.view",
     "chat.view", "chat.send",
     "attendance.self",
     "notifications.view",
   ],
+
 }
+
+// Legacy English-name fallbacks for databases created by older builds.
+// ("Supervisor" is spelled the same in both languages.)
+Object.assign(ROLE_PERMISSIONS, {
+  Administrator: [...PERMISSIONS],
+  Manager: ROLE_PERMISSIONS["Gerente"],
+  "Kitchen Staff": ROLE_PERMISSIONS["Cocina"],
+  Waiter: ROLE_PERMISSIONS["Mesero"],
+  Cashier: ROLE_PERMISSIONS["Cajero"],
+  Employee: ROLE_PERMISSIONS["Empleado"],
+})
 
 export function getRolePermissions(roleName: string): string[] {
   return ROLE_PERMISSIONS[roleName] ?? []

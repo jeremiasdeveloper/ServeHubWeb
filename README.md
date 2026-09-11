@@ -1,356 +1,130 @@
 # ServeHub
 
-**Plataforma web-first de operaciones para restaurantes** — configurable, multi-restaurante, responsive y en tiempo real.
+**Plataforma de operaciones para restaurantes — Windows, Android y Web.**
 
-ServeHub entrega a cada restaurante su propia versión de marca de la misma aplicación: administración, empleados, roles y permisos, mesas, órdenes con flujo de cocina, quejas, servicio al cliente, chat interno, asistencia, notificaciones y configuración — todo en un único frontend que se adapta automáticamente a escritorio y móvil.
+ServeHub es un sistema de gestión de restaurantes auto-alojado que funciona en el hardware del propio restaurante. El PC con Windows actúa como servidor autorizado; los dispositivos Android se conectan como clientes de empleado a través de la red local. **No se necesita Internet para operar.**
 
-> **Estado del MVP**: funcional en navegador (escritorio + móvil), con datos demo de **Café Sakura**. El empaquetado Tauri 2 (Windows/Android) está documentado como ruta oficial en [`docs/tauri.md`](docs/tauri.md).
-
----
-
-## Índice
-
-1. [Capturas](#capturas)
-2. [Qué incluye el MVP](#qué-incluye-el-mvp)
-3. [Arquitectura](#arquitectura)
-4. [Web-first y multiplataforma](#web-first-y-multiplataforma)
-5. [Diseño responsive automático](#diseño-responsive-automático)
-6. [Órdenes y flujo de cocina](#órdenes-y-flujo-de-cocina)
-7. [Empleados, roles y permisos](#empleados-roles-y-permisos)
-8. [Tiempo real](#tiempo-real)
-9. [Módulos de soporte](#módulos-de-soporte)
-10. [Configuración JSON por restaurante](#configuración-json-por-restaurante)
-11. [Localización (ES/EN)](#localización-esen)
-12. [Pantalla de inicio (splash) y branding](#pantalla-de-inicio-splash-y-branding)
-13. [Modo desarrollador (F10) y vista previa móvil](#modo-desarrollador-f10-y-vista-previa-móvil)
-14. [Inicio rápido](#inicio-rápido)
-15. [Credenciales demo](#credenciales-demo)
-16. [Builds de producción](#builds-de-producción)
-17. [Windows y Android (Tauri 2)](#windows-y-android-tauri-2)
-18. [Redes: el PC del restaurante es el servidor](#redes-el-pc-del-restaurante-es-el-servidor)
-19. [Documentación completa](#documentación-completa)
-20. [Solución de problemas](#solución-de-problemas)
-21. [Arquitectura futura en la nube](#arquitectura-futura-en-la-nube)
-22. [Contribuir](#contribuir)
-23. [Licencia](#licencia)
+> **ServeHub 1.0** — instalador NSIS para Windows (`ServeHub_1.0.0_x64-setup.exe`) y APK Android firmado (`ServeHub.apk`) disponibles en [Releases](../../releases).
 
 ---
-
-## Capturas
-
-| Splash / Login | Dashboard (escritorio) |
-| --- | --- |
-| *(ejecuta el proyecto para verlo — splash con branding Café Sakura)* | *(sidebar + tarjetas de estado + órdenes recientes)* |
-
-| Advertencia de administrador | Órdenes (kanban por estado) |
-| --- | --- |
-| *cuenta regresiva de 10s — "Cuidado con lo que haces"* | *(transiciones con permisos por rol)* |
-
-> Los módulos se ven mejor en vivo: `bun run dev` y abre la app.
-
-## Qué incluye el MVP
-
-- **Autenticación** con usuario + contraseña por restaurante (Argon2id, sesiones de 12 h)
-- **7 roles** del sistema y **31 permisos** aplicados en el backend (ocultar UI no es seguridad)
-- **Órdenes** con máquina de estados validada en servidor: `DRAFT → SENT → RECEIVED → PREPARING → READY → DELIVERED → COMPLETED` (+ `CANCELLED`)
-- **Mesas** con estados (`Disponible`, `Ocupada`, `Reservada`, `Necesita limpieza`) en grilla responsive
-- **Tiempo real** (socket.io): la cocina marca "lista" y el mesero recibe la notificación al instante
-- **Chat interno** con conversaciones grupales y mensajes en vivo
-- **Quejas** y **servicio al cliente** con asignación y resolución
-- **Asistencia** (check-in/check-out diario) y **notificaciones** por usuario
-- **Configuración JSON** por restaurante: branding, features, idiomas
-- **ES/EN** con español por defecto — ningún texto visible está hardcodeado
-- **Modo desarrollador (F10)** con estado del servidor, conteos por tabla, recarga de configuración, re-seed de datos y **vista previa móvil 390×844**
-- **Advertencia de administrador** con cuenta regresiva de 10 s al iniciar sesión como admin
 
 ## Arquitectura
 
 ```text
-┌────────────────────────────────────────────────────────────┐
-│                  ServeHub (un solo frontend)               │
-│   Next.js 16 + React 19 + TypeScript + Tailwind + shadcn   │
-│   layouts adaptativos: sidebar (≥1024px) / bottom-nav (<768)│
-└──────────────┬─────────────────────────────┬───────────────┘
-               │ REST (fetch, JSON)          │ WebSocket (socket.io)
-               ▼                             ▼
-┌──────────────────────────┐   ┌─────────────────────────────┐
-│  API Routes (Next.js)    │   │  mini-services/realtime     │
-│  /api/auth /api/orders   │   │  socket.io :3003 (clientes) │
-│  /api/tables /api/chat … │──▶│  bridge HTTP :3004 (API →   │
-│  auth · permisos · estado│   │  broadcast de eventos)      │
-└──────────────┬───────────┘   └─────────────────────────────┘
-               │ Prisma ORM (SQL parametrizado)
-               ▼
-┌──────────────────────────┐
-│  SQLite  db/custom.db    │
-│  16 modelos, FK + índices│
-└──────────────────────────┘
+                 Wi-Fi / LAN del restaurante
+                          │
+             ┌────────────┴────────────┐
+             │                         │
+       ServeHub Server              Android
+        (PC Windows)              (Empleados)
+     Next.js :3000                 APK Tauri 2
+     socket.io :3003               descubrimiento mDNS
+             │                         │
+             └─────── SQLite ──────────┘
 ```
 
-> **Nota de adaptación**: la especificación original planteaba Vite + Axum/Rust + SQLx. Este MVP se implementó sobre **Next.js 16 (App Router) + Prisma/SQLite + socket.io**, que cubre exactamente los mismos requisitos funcionales (REST, auth, permisos, WebSocket, SQLite) en un solo repositorio ejecutable. La separación frontend/servicios se mantiene limpia (`src/lib/api-client.ts` es la única puerta del frontend hacia el backend), por lo que migrar la capa de API a Rust/Axum más adelante no requiere tocar la UI. Detalles en [`docs/architecture.md`](docs/architecture.md).
+- **Windows**: servidor del restaurante + administración (Tauri 2 + Next.js standalone + Bun).
+- **Android**: cliente ligero de empleado (Tauri 2). Se conecta al servidor por LAN con descubrimiento automático mDNS (`_servehub._tcp`) y fallback manual IP:puerto.
+- **Web**: el mismo frontend servido por el servidor Next.js.
 
-## Web-first y multiplataforma
+## Módulos
 
-- **Desarrollo**: `bun run dev` (o `npm run dev`) levanta todo lo necesario en el puerto **3000**.
-- **Navegador**: la app completa funciona sin nada extra — escritorio o móvil.
-- **Windows / Android**: el mismo frontend se empaqueta con **Tauri 2** (sin Electron). Ver [`docs/tauri.md`](docs/tauri.md).
-- **Un solo código**: modelos, capa API, estado, lógica de negocio, rutas, i18n y configuración son compartidos; solo la presentación se adapta.
+| Módulo | Descripción |
+|--------|-------------|
+| Pedidos | Flujo completo: Borrador → Enviado → Recibido → Preparando → Listo → Entregado → Completado (máquina de estados validada en el servidor) |
+| Mesas | Grilla configurable con estados (Disponible, Ocupada, Reservada, Necesita limpieza) |
+| Menú | Categorías y productos con precio y disponibilidad |
+| Empleados | Gestión de usuarios (crear, editar, desactivar, restablecer contraseña) |
+| Roles | Roles modulares en español con permisos granulares editables |
+| Chat | Mensajería de equipo en tiempo real (limpio en instalaciones nuevas) |
+| Quejas | Seguimiento con estados Abierta → En progreso → Resuelta → Cerrada |
+| Servicio al cliente | Solicitudes ligeras por canal |
+| Asistencia | Check-in / Check-out por empleado y fecha |
+| Notificaciones | Accionables: cada notificación navega a su destino |
+| PDF | Comprobantes y resúmenes de pedidos con branding del restaurante |
+| Backup | Descarga y restauración de la base SQLite |
+| Auditoría | Registro de acciones administrativas |
+| Modo desarrollador | Panel de diagnóstico con F10 |
 
-## Diseño responsive automático
+## Instalación
 
-No hay selector "modo escritorio / modo móvil": la app responde al viewport real.
+### Windows
 
-| Rango | Layout |
-| --- | --- |
-| `< 768px` (móvil, 9:16) | Header compacto, **bottom navigation**, tarjetas apiladas |
-| `768 – 1023px` (tablet) | Grillas intermedias |
-| `≥ 1024px` (escritorio 16:9) | **Sidebar fijo** + header superior + contenido max-w-7xl |
+1. Descarga `ServeHub_1.0.0_x64-setup.exe` desde [Releases](../../releases) e instálalo.
+2. Abre ServeHub. El servidor del restaurante arranca automáticamente (base de datos, API en el puerto 3000, tiempo real en el 3003).
+3. En el primer arranque aparece el **asistente de configuración inicial**: nombre del restaurante, colores, fuente, idioma y creación de la cuenta administradora (con generador de contraseña).
 
-- Orientación portrait/landscape manejada por media queries y `matchMedia`.
-- Probado con la emulación de dispositivos de Chrome DevTools (390×844, 1920×1080).
-- Estados offline / reconectando / servidor caído con indicador visible y mensajes amigables.
-- Detalles: [`docs/responsive-design.md`](docs/responsive-design.md).
+No se requiere Node.js ni ninguna herramienta de desarrollo.
 
-## Órdenes y flujo de cocina
+### Android
 
-```text
-DRAFT ──▶ SENT ──▶ RECEIVED ──▶ PREPARING ──▶ READY ──▶ DELIVERED ──▶ COMPLETED
-   └────────────────────────▶ CANCELLED ◀────────────┘
-```
+1. Instala `ServeHub.apk` en el dispositivo (Android 7.0+, arm64).
+2. Abre la app: busca automáticamente servidores ServeHub en la red local (`_servehub._tcp`) y muestra nombre del restaurante + Server ID.
+3. Toca **CONECTAR** e inicia sesión con una cuenta creada por el administrador.
 
-- Cada transición exige un **permiso específico** y se valida en el backend (no se confía en el frontend).
-- **Mesero**: crea el pedido por mesa, agrega ítems/notas, envía a cocina, marca entregado.
-- **Cocina**: recibe, marca "preparando" y "lista" → notificación automática al mesero.
-- **Cajero**: ve órdenes y cierra/completa. **Manager/Admin**: historial completo.
-- Historial de estados por orden (`OrderStatusHistory`) para auditoría.
+No existe el registro de usuarios: los empleados solo acceden con cuentas creadas desde la administración.
 
-Detalle completo: [`docs/orders.md`](docs/orders.md).
+### Identidad del servidor
 
-## Empleados, roles y permisos
+Cada instalación genera un **Server ID estable** (p. ej. `SH-CF9A-8X21`) que persiste entre reinicios y se anuncia por mDNS para que los dispositivos Android identifiquen el restaurante correcto.
 
-- Roles base configurables: **Administrator, Manager, Supervisor, Waiter, Kitchen Staff, Cashier, Employee** (renombrables; permisos editables desde la UI y aplicados por el servidor en el próximo request).
-- Resolución de permisos en servidor: overrides del usuario ⊕ permisos del rol (DB) ⊕ defaults del sistema.
-- Empleados creados **solo por administradores** — no existe auto-registro.
+## Modo sin conexión (Android)
 
-Detalle: [`docs/roles-and-permissions.md`](docs/roles-and-permissions.md).
+Si el dispositivo pierde la conexión con el servidor:
 
-## Tiempo real
+- La información previamente sincronizada sigue visible en **modo solo lectura**.
+- Todas las operaciones de escritura (crear pedidos, enviar mensajes, quejas, asistencia…) se bloquean y la UI lo indica con claridad.
+- Al volver la conexión, la sesión se revalida y los datos se refrescan automáticamente. No hay cola oculta de escrituras.
 
-Eventos broadcast por socket.io a través del gateway:
+Internet y servidor ServeHub son cosas distintas: sin Internet pero con LAN, todo sigue funcionando.
 
-```text
-order.created · order.updated · order.ready · order.delivered
-message.created · notification.created
-```
+## Seguridad
 
-- Reconexión automática con backoff, indicador Online/Offline en el header.
-- Al marcar una orden **lista**, el servidor notifica al mesero dueño de la orden.
-
-## Módulos de soporte
-
-- **Chat** — conversaciones grupales, mensajes en vivo, no leídos.
-- **Quejas** — `Open → In Progress → Resolved → Closed` con asignación.
-- **Servicio al cliente** — requests con canal (teléfono/online/presencial) y estado.
-- **Asistencia** — check-in/check-out con fecha, estado y usuario.
-- **Notificaciones** — por usuario, badge de no leídas + toasts en vivo.
-
-## Configuración JSON por restaurante
-
-```json
-{
-  "restaurant": { "name": "Café Sakura", "id": "cafe_sakura", "logo": null },
-  "branding": {
-    "primaryColor": "#E85D75",
-    "secondaryColor": "#FFFFFF",
-    "accentColor": "#FFB7C5"
-  },
-  "features": {
-    "orders": true, "employees": true, "complaints": true,
-    "customerService": true, "chat": true, "attendance": true,
-    "tables": true, "notifications": true
-  },
-  "localization": { "defaultLanguage": "es", "supportedLanguages": ["es", "en"] },
-  "server": { "version": "1.0.0-mvp", "realtimePort": 3003 }
-}
-```
-
-- Si `features.chat = false`, el módulo Chat **desaparece** de la navegación. Lo mismo para el resto.
-- Branding aplicado en vivo (CSS custom properties): logo, color primario/acento, splash.
-- Referencia completa de campos: [`docs/configuration.md`](docs/configuration.md).
-
-## Localización (ES/EN)
-
-- Español por defecto, inglés incluido; **ningún string visible está hardcodeado**.
-- Diccionarios con claves tipadas (`login.title`, `orders.markReady`, `admin.warning`…, 278 claves por idioma) en `src/lib/i18n.ts`.
-- Cambiar un texto = editar el JSON/diccionario, sin tocar código de la app.
-- Guía para agregar idiomas: [`docs/localization.md`](docs/localization.md).
-
-## Pantalla de inicio (splash) y branding
-
-- Splash **obligatorio** en cada arranque (browser/Windows/Android): logo del restaurante si existe, si no **ServeHub**, con los colores configurados → transición a la app.
-
-## Modo desarrollador (F10) y vista previa móvil
-
-- **F10** (escritorio, con permiso `developer.access`) abre el panel:
-  - estado del servidor (API / DB / realtime), conteos por tabla
-  - configuración activa + feature flags + roles y sus permisos
-  - **recargar configuración** y **re-sembrar datos demo** (POST /api/developer)
-  - **vista previa móvil 390×844** para probar el layout desde el escritorio
-- El modo desarrollador es independiente del modo administrador.
-- Sin permiso, F10 muestra un error y no hace nada.
-
-## Inicio rápido
-
-Requisitos: [Bun](https://bun.sh) ≥ 1.0 (o Node.js ≥ 18 con npm).
-
-```bash
-# 1) instalar dependencias
-bun install            # ó: npm install
-
-# 2) crear/esquematizar la base de datos SQLite
-bun run db:push        # ó: npm run db:push
-
-# 3) datos demo (Café Sakura)
-bun run scripts/seed.ts
-
-# 4) servicio de tiempo real (socket.io :3003 + bridge :3004)
-cd mini-services/realtime && bun install && bun --hot index.ts &
-
-# 5) app web
-bun run dev            # http://localhost:3000
-```
-
-> En despliegues con gateway/Caddy, los clientes socket.io conectan con `io("/?XTransformPort=3003")`. En desarrollo local directo también funciona porque el gateway mapea el query param al puerto.
-
-Estructura del proyecto:
-
-```text
-src/
-├── app/
-│   ├── page.tsx              # única ruta visible (app shell + splash + login)
-│   └── api/                  # REST API (auth, orders, tables, chat, …)
-├── components/               # shell responsive, splash, login, vistas
-│   └── views/                # dashboard, orders, tables, employees, …
-├── lib/
-│   ├── auth.ts               # Argon2 + sesiones
-│   ├── authz.ts              # resolución de permisos (server)
-│   ├── permissions.ts        # catálogo de permisos y defaults por rol
-│   ├── order-state.ts        # máquina de estados de órdenes
-│   ├── api-client.ts         # capa única frontend → API
-│   ├── i18n.ts               # diccionarios ES/EN tipados
-│   ├── store.ts              # estado global (Zustand)
-│   └── use-realtime.ts       # socket singleton (socket.io)
-└── hooks/
-mini-services/realtime/       # socket.io :3003 + bridge :3004
-prisma/schema.prisma          # 16 modelos SQLite
-scripts/seed.ts               # datos demo
-docs/                         # documentación completa
-```
-
-## Credenciales demo
-
-> ⚠️ **Solo para desarrollo/demo.** Cambia estas credenciales antes de usar en producción.
-
-| Usuario | Contraseña | Rol |
-| --- | --- | --- |
-| `admin` | `0000` | Administrator |
-| `manager01` | `0000` | Manager |
-| `waiter01` | `0000` | Waiter |
-| `waiter02` | `0000` | Waiter |
-| `kitchen01` | `0000` | Kitchen Staff |
-| `cashier01` | `0000` | Cashier |
-
-Las contraseñas se almacenan **únicamente como hash Argon2id**.
+- Hashing de contraseñas con **Argon2id**; sin contraseñas en texto plano.
+- Sesiones opacas con TTL de 12 horas; los usuarios desactivados no pueden entrar.
+- **Todos** los permisos se validan en el servidor; el frontend nunca es fuente de autoridad.
+- Auditoría de acciones administrativas (creación de empleados, cambios de rol, backups, configuración).
 
 ## Builds de producción
 
 ```bash
-bun run build    # next build (standalone) + assets
-bun run start    # sirve la build de producción
-bun run lint     # ESLint
+bun install
+bunx prisma db push          # esquema → SQLite
+bun run build                # standalone web/Windows
+bun run start                # servidor de producción
+
+# Paquete Windows (recursos del servidor + instalador NSIS)
+bash packaging/build-windows-package.sh
+bunx tauri build
+
+# APK Android
+SERVEHUB_EXPORT=1 bunx next build    # frontend estático (rutas API excluidas)
+bunx tauri android init              # primera vez
+bunx tauri android build             # luego firmar con apksigner
 ```
 
-## Windows y Android (Tauri 2)
-
-La ruta oficial para empaquetar la **misma** aplicación:
-
-- **Windows (.exe/.msi)**: shell de escritorio orientado a administración, 16:9, F10 activo.
-- **Android (.apk)**: shell móvil 9:16 orientado a empleados; conecta al PC del restaurante por Wi-Fi/LAN.
+## Desarrollo
 
 ```bash
-bun add -D @tauri-apps/cli
-bun tauri init       # frontendDist apuntando a la build/servidor web
-bun tauri build      # Windows
-bun tauri android init && bun tauri android build   # Android
+bun install
+bunx prisma db push
+bun run dev                  # http://localhost:3000
 ```
 
-> En este MVP los binarios Tauri no se compilaron (el entorno de desarrollo no cuenta con toolchain Rust/Android); los pasos completos, `tauri.conf.json` de referencia y estrategias de conexión están documentados en [`docs/tauri.md`](docs/tauri.md).
+En desarrollo puedes cargar datos de prueba (marcados como DEVELOPMENT/TEST) desde `bun run scripts/seed.ts` o el Modo Desarrollador (F10). Una instalación de producción arranca limpia: solo roles del sistema y el Server ID; el primer administrador se crea en el asistente.
 
-## Redes: el PC del restaurante es el servidor
+## Documentación
 
-```text
-Android (meseros/cocina)          Windows PC (administración)
-        │                                  │
-        └──────────── Wi-Fi / LAN ─────────┤
-                                           ▼
-                              ServeHub Server (API + WS)
-                                           │
-                                        SQLite
-```
+- [Arquitectura](docs/architecture.md) · [Instalación](docs/installation.md) · [Windows](docs/windows.md) · [Android](docs/android.md)
+- [Servidor y LAN](docs/server.md) · [Autenticación](docs/authentication.md) · [Roles y permisos](docs/roles-and-permissions.md)
+- [Pedidos](docs/orders.md) · [Menú](docs/menu.md) · [Mesas](docs/tables.md) · [Notificaciones](docs/notifications.md)
+- [Modo offline](docs/offline-mode.md) · [PDF](docs/pdf.md) · [Backup](docs/backup.md) · [Configuración](docs/configuration.md)
+- [Localización](docs/localization.md) · [Modo desarrollador](docs/developer-mode.md) · [Seguridad](docs/security.md) · [Despliegue](docs/deployment.md)
 
-- El servidor escucha en el PC del restaurante; los móviles apuntan a `http://<IP-LAN>:<puerto>`.
-- Sin nube requerida para operar; la arquitectura no impide migrar a cloud después.
+## Stack
 
-## Documentación completa
-
-| Doc | Contenido |
-| --- | --- |
-| [`docs/architecture.md`](docs/architecture.md) | Arquitectura, flujos, decisión de stack |
-| [`docs/api.md`](docs/api.md) | Referencia completa de endpoints con ejemplos |
-| [`docs/database.md`](docs/database.md) | Modelo de datos, 16 tablas, relaciones |
-| [`docs/orders.md`](docs/orders.md) | Máquina de estados, permisos por transición |
-| [`docs/roles-and-permissions.md`](docs/roles-and-permissions.md) | Roles, matriz de permisos |
-| [`docs/configuration.md`](docs/configuration.md) | JSON de configuración y feature flags |
-| [`docs/localization.md`](docs/localization.md) | i18n, cómo agregar idiomas |
-| [`docs/responsive-design.md`](docs/responsive-design.md) | Breakpoints, navegación adaptativa |
-| [`docs/security.md`](docs/security.md) | Argon2, sesiones, límites del MVP |
-| [`docs/development.md`](docs/development.md) | Setup, scripts, troubleshooting |
-| [`docs/tauri.md`](docs/tauri.md) | Empaquetado Windows/Android (roadmap) |
-| [`docs/deployment.md`](docs/deployment.md) | Despliegue LAN, servicios, checklist |
-
-## Solución de problemas
-
-| Síntoma | Causa probable | Solución |
-| --- | --- | --- |
-| `500` en `/api/*` y no hay DB | Falta `db push` / DB vacía | `bun run db:push && bun run scripts/seed.ts` |
-| Header muestra **Offline** | Servicio realtime caído o gateway sin ruta WS | Levanta `mini-services/realtime` y revisa el gateway (`XTransformPort=3003`) |
-| Login falla con credenciales demo | DB sin sembrar | `bun run scripts/seed.ts` |
-| F10 no abre el panel | Usuario sin `developer.access` | Usa `admin` |
-| Puerto 3000 ocupado | Otro proceso | `PORT=3001 bun run dev` (o detén el previo) |
-| Cambié un texto y no aparece | Cache del navegador | Recarga con cache deshabilitado |
-
-## Arquitectura futura en la nube
-
-Fuera del alcance del MVP, pero la arquitectura no la bloquea:
-
-```text
-Android / Windows / Browser
-          │ Internet
-          ▼
-  Cloudflare / Dominio
-          ▼
-    ServeHub Cloud (API + WS + DB)
-```
-
-Cada restaurante podrá elegir **servidor local** o **cloud** sin reescribir la app: el frontend solo conoce la URL base del API (`src/lib/api-client.ts`).
-
-## Contribuir
-
-1. Haz fork y crea una rama: `git checkout -b feature/mi-feature`
-2. Commits con formato [Conventional Commits](https://www.conventionalcommits.org/es/): `feat:`, `fix:`, `docs:`, `chore:`
-3. Ejecuta `bun run lint` antes del PR
-4. Describe claramente el cambio y capturas si afecta UI
+Next.js 16 · React 19 · TypeScript · Prisma + SQLite · Socket.IO · Tauri 2 (Rust) · Bun · Tailwind CSS 4 · shadcn/ui
 
 ## Licencia
 
-MIT — ver [`LICENSE`](LICENSE).
+Ver [LICENSE](LICENSE).

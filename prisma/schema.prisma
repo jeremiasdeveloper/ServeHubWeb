@@ -240,3 +240,31 @@ model AuditLog {
   ip        String?
   createdAt DateTime @default(now())
 }
+
+// ---------------------------------------------------------------------------
+// Menu (categories & products)
+// ---------------------------------------------------------------------------
+
+model MenuCategory {
+  id        String      @id @default(cuid())
+  name      String      @unique
+  sortOrder Int         @default(0)
+  active    Boolean     @default(true)
+  items     MenuItem[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+model MenuItem {
+  id          String        @id @default(cuid())
+  categoryId  String
+  category    MenuCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name        String        @unique
+  description String?
+  price       Float
+  available   Boolean       @default(true)
+  active      Boolean       @default(true)
+  sortOrder   Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}

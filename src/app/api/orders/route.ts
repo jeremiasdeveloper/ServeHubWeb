@@ -93,7 +93,7 @@ export async function POST(req: Request) {
     await emitRealtime({ type: "order.created", orderId: order.id, tableNumber: table.number, status: "SENT" })
     // notify kitchen staff
     const kitchen = await db.user.findMany({
-      where: { role: { name: "Kitchen Staff" }, active: true },
+      where: { role: { name: { in: ["Cocina", "Kitchen Staff"] } }, active: true },
       select: { id: true },
     })
     for (const k of kitchen) {

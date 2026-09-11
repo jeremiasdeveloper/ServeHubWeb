@@ -60,3 +60,20 @@ upload/
 download/
 tool-results/
 worklog.md
+
+# ServeHub 1.0 build artifacts & packaging
+/src-tauri/target/
+/src-tauri/gen/android/build/
+/src-tauri/gen/android/.gradle/
+/src-tauri/gen/android/app/src/main/jniLibs/
+/src-tauri/gen/schemas/
+/src-tauri/resources/server/
+/.cargo/
+/release/
+/ServeHub.apk
+/ServeHub.apk.idsig
+/servehub.p12
+/out/
+*.db
+*.db-journal
+*.restore-pending

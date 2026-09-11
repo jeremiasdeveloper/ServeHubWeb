@@ -6,11 +6,13 @@ import { create } from "zustand"
 import { api, getToken, setToken } from "./api-client"
 import type { ServeHubConfig, CurrentUser } from "./types"
 import { translations, type Locale, type TranslationKey } from "./i18n"
+import { getSavedConnection, isEmbeddedClient, getDesktopServerUrl, ensureDesktopConnection } from "./connection"
 
 export type ViewKey =
   | "dashboard"
   | "orders"
   | "tables"
+  | "menu"
   | "employees"
   | "roles"
   | "complaints"
@@ -25,6 +27,11 @@ interface AppState {
   booted: boolean
   config: ServeHubConfig | null
   bootError: string | null
+  // Packaged remote clients (Android) must first pick a restaurant server.
+  connectionRequired: boolean
+  // First-run setup wizard (no users exist yet).
+  setupNeeded: boolean | null
+  setupServerId: string | null
   boot: () => Promise<void>
 
   // auth
@@ -49,9 +56,12 @@ interface AppState {
   mobilePreview: boolean
   toggleMobilePreview: () => void
 
-  // realtime
+  // realtime / connectivity
   realtimeConnected: boolean
   setRealtimeConnected: (v: boolean) => void
+  // True while the ServeHub server answers health checks. When false the
+  // app is in offline read-only mode (writes blocked by api-client).
+  serverReachable: boolean
 }
 
 function interpolate(template: string, vars?: Record<string, string | number>): string {
@@ -73,12 +83,53 @@ export const useApp = create<AppState>((set) => ({
   booted: false,
   config: null,
   bootError: null,
+  connectionRequired: false,
+  setupNeeded: null,
+  setupServerId: null,
   boot: async () => {
+    // Packaged remote client (Android) without a saved server connection:
+    // show the connection screen first — there is no API to talk to yet.
+    if (isEmbeddedClient() && !getSavedConnection()) {
+      // Windows desktop shell: auto-connect to its own embedded server.
+      if (getDesktopServerUrl()) {
+        const ok = await ensureDesktopConnection()
+        if (!ok) {
+          set({ booted: true, connectionRequired: true, config: null, bootError: null })
+          return
+        }
+      } else {
+        set({ booted: true, connectionRequired: true, config: null, bootError: null })
+        return
+      }
+    }
     try {
       const config = await api.config()
-      set({ config, booted: true, bootError: null })
+      if (config.server?.realtimePort && typeof window !== "undefined") {
+        const { storeRealtimePort } = await import("./connection")
+        storeRealtimePort(config.server.realtimePort)
+      }
+      // First-run setup check (only meaningful when no users exist).
+      let setupNeeded: boolean | null = null
+      let setupServerId: string | null = null
+      try {
+        const status = await api.setupStatus()
+        setupNeeded = status.needsSetup
+        setupServerId = status.serverId
+      } catch {}
+      set({
+        config,
+        booted: true,
+        bootError: null,
+        connectionRequired: false,
+        setupNeeded,
+        setupServerId,
+      })
     } catch (e) {
-      set({ booted: true, bootError: e instanceof Error ? e.message : "boot failed" })
+      set({
+        booted: true,
+        bootError: e instanceof Error ? e.message : "boot failed",
+        connectionRequired: false,
+      })
     }
   },
 
@@ -125,6 +176,8 @@ export const useApp = create<AppState>((set) => ({
 
   realtimeConnected: false,
   setRealtimeConnected: (v) => set({ realtimeConnected: v }),
+
+  serverReachable: true,
 }))
 
 // Initialize locale from localStorage on client

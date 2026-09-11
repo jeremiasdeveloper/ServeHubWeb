@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useApp } from "@/lib/store"
-import { api } from "@/lib/api-client"
+import { api, downloadBackup, restoreBackup } from "@/lib/api-client"
 import { PageHeader, Loading, ErrorState } from "./view-primitives"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -11,11 +11,14 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useTheme } from "next-themes"
-import { Building2, Palette, Boxes, Globe, Server, Save } from "lucide-react"
+import { SUPPORTED_FONTS } from "@/lib/fonts"
+import { Building2, Palette, Boxes, Globe, Server, Save, Type, DatabaseBackup, Upload } from "lucide-react"
 import { toast } from "sonner"
+import { useRef } from "react"
 
 export function SettingsView() {
   const t = useApp((s) => s.t)
+  const restoreInput = useRef<HTMLInputElement>(null)
   const config = useApp((s) => s.config)!
   const locale = useApp((s) => s.locale)
   const setLocale = useApp((s) => s.setLocale)
@@ -36,11 +39,28 @@ export function SettingsView() {
     setSaving(true)
     try {
       await api.updateSettings(settings)
+      // Keep the runtime config in sync with the restaurant name.
+      if (settings.restaurant_name && settings.restaurant_name !== config.restaurant.name) {
+        await saveConfigPatch({ restaurant: { name: settings.restaurant_name } })
+      }
       toast.success(t("common.save"))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t("errors.unknown"))
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Persist a partial config patch (colors, font, features) and refresh
+  // the boot config so every view picks up the change immediately.
+  const saveConfigPatch = async (patch: Record<string, unknown>) => {
+    try {
+      await api.updateConfig(patch)
+      const config = await api.config()
+      useApp.setState({ config })
+      toast.success(t("common.save"))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t("errors.unknown"))
     }
   }
 
@@ -90,16 +110,15 @@ export function SettingsView() {
                     <input
                       type="color"
                       value={config.branding[k]}
-                      onChange={() => {}}
-                      disabled
-                      className="h-9 w-12 rounded border cursor-not-allowed"
+                      onChange={(e) => saveConfigPatch({ branding: { [k]: e.target.value } })}
+                      className="h-9 w-12 cursor-pointer rounded border bg-transparent"
                     />
                     <span className="text-xs font-mono">{config.branding[k]}</span>
                   </div>
                 </div>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground">Los colores de branding se configuran en <code>src/lib/config.ts</code> (build-time).</p>
+            <p className="text-xs text-muted-foreground">Los cambios se aplican al instante y quedan guardados.</p>
           </CardContent>
         </Card>
 
@@ -113,10 +132,26 @@ export function SettingsView() {
             {Object.entries(config.features).map(([k, v]) => (
               <div key={k} className="flex items-center justify-between rounded-md border p-2">
                 <span className="text-sm capitalize">{k}</span>
-                <Switch checked={v} disabled />
+                <Switch checked={v} onCheckedChange={(checked) => saveConfigPatch({ features: { [k]: checked } })} />
               </div>
             ))}
-            <p className="text-xs text-muted-foreground">Las feature flags se configuran en <code>src/lib/config.ts</code>.</p>
+          </CardContent>
+        </Card>
+
+        {/* Typography */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2"><Type className="h-4 w-4" /> {t("setup.font")}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Select value={config.appearance?.font ?? "inter"} onValueChange={(v) => saveConfigPatch({ appearance: { font: v } })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SUPPORTED_FONTS.map((f) => (
+                  <SelectItem key={f.id} value={f.id}>{f.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </CardContent>
         </Card>
 
@@ -150,6 +185,37 @@ export function SettingsView() {
           </CardContent>
         </Card>
 
+        {/* Backup */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2"><DatabaseBackup className="h-4 w-4" /> {t("settings.backup")}</CardTitle>
+            <CardDescription>{t("settings.backupDesc")}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={async () => {
+              try { await downloadBackup(); toast.success(t("settings.backupDownload")) }
+              catch (e) { toast.error(e instanceof Error ? e.message : t("errors.unknown")) }
+            }}>
+              <DatabaseBackup className="h-4 w-4 mr-2" /> {t("settings.backupDownload")}
+            </Button>
+            <input ref={restoreInput} type="file" accept=".db,application/octet-stream" hidden onChange={async (e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ""
+              if (!f) return
+              if (!window.confirm(t("settings.restoreConfirm"))) return
+              try {
+                await restoreBackup(f)
+                toast.success(t("settings.restoreStaged"))
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : t("errors.unknown"))
+              }
+            }} />
+            <Button variant="destructive" onClick={() => restoreInput.current?.click()}>
+              <Upload className="h-4 w-4 mr-2" /> {t("settings.backupRestore")}
+            </Button>
+          </CardContent>
+        </Card>
+
         {/* Server info */}
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -157,6 +223,7 @@ export function SettingsView() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <div><div className="text-xs text-muted-foreground">Server ID</div><div className="font-mono">{config.serverId ?? "—"}</div></div>
               <div><div className="text-xs text-muted-foreground">Version</div><div className="font-mono">{config.server.version}</div></div>
               <div><div className="text-xs text-muted-foreground">Realtime port</div><div className="font-mono">{config.server.realtimePort}</div></div>
               <div><div className="text-xs text-muted-foreground">Default lang</div><div className="font-mono">{config.localization.defaultLanguage}</div></div>

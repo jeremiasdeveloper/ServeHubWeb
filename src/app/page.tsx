@@ -4,11 +4,14 @@ import { useEffect, useState } from "react"
 import { useApp } from "@/lib/store"
 import { SplashScreen } from "@/components/splash-screen"
 import { BrandingInjector } from "@/components/branding-injector"
+import { ConnectionScreen } from "@/components/connection-screen"
+import { SetupWizard } from "@/components/setup-wizard"
 import { LoginScreen } from "@/components/login-screen"
 import { ResponsiveShell } from "@/components/responsive-shell"
 import { DashboardView } from "@/components/views/dashboard-view"
 import { OrdersView } from "@/components/views/orders-view"
 import { TablesView } from "@/components/views/tables-view"
+import { MenuView } from "@/components/views/menu-view"
 import { EmployeesView } from "@/components/views/employees-view"
 import { RolesView } from "@/components/views/roles-view"
 import { ComplaintsView } from "@/components/views/complaints-view"
@@ -19,7 +22,8 @@ import { NotificationsView } from "@/components/views/notifications-view"
 import { SettingsView } from "@/components/views/settings-view"
 import { DeveloperPanel } from "@/components/views/developer-panel"
 import { MobilePreviewFrame } from "@/components/views/mobile-preview-frame"
-import { Loader2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Loader2, RefreshCw, ServerCrash } from "lucide-react"
 
 export default function Page() {
   const booted = useApp((s) => s.booted)
@@ -30,6 +34,10 @@ export default function Page() {
   const view = useApp((s) => s.view)
   const devMode = useApp((s) => s.devMode)
   const mobilePreview = useApp((s) => s.mobilePreview)
+  const bootError = useApp((s) => s.bootError)
+  const connectionRequired = useApp((s) => s.connectionRequired)
+  const setupNeeded = useApp((s) => s.setupNeeded)
+  const setupServerId = useApp((s) => s.setupServerId)
 
   const [showSplash, setShowSplash] = useState(true)
 
@@ -52,6 +60,7 @@ export default function Page() {
       case "dashboard": return <DashboardView />
       case "orders": return <OrdersView />
       case "tables": return <TablesView />
+      case "menu": return <MenuView />
       case "employees": return <EmployeesView />
       case "roles": return <RolesView />
       case "complaints": return <ComplaintsView />
@@ -80,6 +89,21 @@ export default function Page() {
         <div className="min-h-screen flex items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
+      ) : connectionRequired ? (
+        <ConnectionScreen onConnected={() => boot()} />
+      ) : bootError ? (
+        <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6 text-center">
+          <ServerCrash className="h-10 w-10 text-muted-foreground" />
+          <div>
+            <h1 className="text-lg font-semibold">ServeHub</h1>
+            <p className="mt-1 max-w-md text-sm text-muted-foreground">{bootError}</p>
+          </div>
+          <Button variant="outline" onClick={() => boot()}>
+            <RefreshCw className="h-4 w-4 mr-2" /> Reintentar
+          </Button>
+        </div>
+      ) : setupNeeded ? (
+        <SetupWizard serverId={setupServerId ?? ""} onDone={() => { boot(); refreshMe() }} />
       ) : authLoading ? (
         <div className="min-h-screen flex items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />

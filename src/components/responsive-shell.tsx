@@ -19,6 +19,8 @@ import {
   Wifi,
   WifiOff,
   Code2,
+  UtensilsCrossed,
+  TriangleAlert,
 } from "lucide-react"
 import { useApp, type ViewKey } from "@/lib/store"
 import { usePermissions } from "@/lib/use-permissions"
@@ -34,6 +36,7 @@ import {
 } from "@/components/ui/sheet"
 import { useState } from "react"
 import { useRealtime } from "@/lib/use-realtime"
+import { useOfflineMonitor } from "@/lib/use-offline-monitor"
 import { toast } from "sonner"
 import { api } from "@/lib/api-client"
 
@@ -42,13 +45,14 @@ interface NavItem {
   labelKey: Parameters<ReturnType<typeof useApp.getState>["t"]>[0]
   icon: React.ElementType
   perm: string
-  feature?: keyof ReturnType<typeof useApp.getState>["config"] extends infer C ? C extends null ? never : C extends { features: infer F } ? keyof F : never : never
+  feature?: keyof NonNullable<ReturnType<typeof useApp.getState>["config"]>["features"]
 }
 
 const NAV_ITEMS: NavItem[] = [
   { key: "dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard, perm: "dashboard.view" },
   { key: "orders", labelKey: "nav.orders", icon: ClipboardList, perm: "orders.view", feature: "orders" },
   { key: "tables", labelKey: "nav.tables", icon: Table2, perm: "tables.view", feature: "tables" },
+  { key: "menu", labelKey: "nav.menu", icon: UtensilsCrossed, perm: "menu.view", feature: "menu" },
   { key: "employees", labelKey: "nav.employees", icon: Users, perm: "employees.view", feature: "employees" },
   { key: "roles", labelKey: "nav.roles", icon: ShieldCheck, perm: "roles.view" },
   { key: "complaints", labelKey: "nav.complaints", icon: MessageSquareWarning, perm: "complaints.view", feature: "complaints" },
@@ -115,6 +119,8 @@ export function ResponsiveShell({ children }: { children: React.ReactNode }) {
   const toggleDev = useApp((s) => s.toggleDev)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [unread, setUnread] = useState(0)
+  const serverReachable = useApp((s) => s.serverReachable)
+  useOfflineMonitor()
 
   const items = useNavItems()
   const restaurantName = config?.restaurant.name ?? "ServeHub"
@@ -280,6 +286,18 @@ export function ResponsiveShell({ children }: { children: React.ReactNode }) {
           </Button>
         </div>
       </header>
+
+      {/* Offline read-only banner */}
+      {!serverReachable && (
+        <div className="sticky top-14 z-20 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 lg:pl-64">
+          <div className="mx-auto flex w-full max-w-7xl items-center gap-2 text-sm">
+            <TriangleAlert className="h-4 w-4 shrink-0 text-amber-600" />
+            <span className="font-medium text-amber-700 dark:text-amber-500">{t("offline.title")}</span>
+            <span className="hidden sm:inline text-muted-foreground">{t("offline.desc")}</span>
+            <Badge variant="outline" className="ml-auto shrink-0 text-amber-700 dark:text-amber-500">{t("offline.readonly")}</Badge>
+          </div>
+        </div>
+      )}
 
       {/* Main content */}
       <main className="flex-1 lg:pl-64 pb-20 lg:pb-0">

@@ -1,115 +1,66 @@
-# ServeHub — Deployment
+# ServeHub 1.0 — Deployment
 
-ServeHub is deployed as a **single-server, LAN-first system**: one restaurant PC runs the web stack, every device (terminals, kitchen screen, phones) points at it through one URL. Desktop/Android shells are optional thin clients — see [tauri.md](tauri.md).
+ServeHub is deployed as a **single-server, LAN-first system**: the restaurant PC runs the full stack and Android employees connect over the local network. Internet is not required for normal operation.
 
-## Topology & ports
+## Production deployment (Windows installer)
 
-```
-Devices (LAN)  ──▶  Caddy :81  ──┬─ default           ──▶ Next.js :3000   (REST + SPA)
-                                 └─ ?XTransformPort=N ──▶ localhost:N    (realtime: N=3003)
+The primary deployment target is the NSIS installer:
 
-Restaurant PC processes:
-  1. Caddy gateway            :81   (Caddyfile)
-  2. Next.js standalone server :3000 (.next/standalone/server.js)
-  3. Realtime mini-service     :3003 socket.io (path "/") + :3004 bridge (localhost)
-  4. SQLite file               db/custom.db
+```bash
+bash packaging/build-windows-package.sh   # assembles src-tauri/resources/server/
+bunx tauri build                          # produces the NSIS installer
 ```
 
-The mini-service's bridge port (3004) is internal — Next.js API routes POST events to `http://localhost:3004/bridge`. Never expose 3000/3003/3004 beyond the gateway; point clients at **:81 only**.
+The installer packages:
 
-## Production build
+- Tauri shell (WebView2 + Rust runtime, mDNS advertisement)
+- Bun runtime (`servehub-runtime.exe`)
+- Next.js standalone server + bundled realtime service (single process)
+- Database template (`db-template.db`, copied to the app data dir on first launch)
+
+After installing, launching ServeHub starts the restaurant server automatically on `0.0.0.0:3000` (API + web) and `:3003` (socket.io), and advertises `_servehub._tcp` via mDNS.
+
+## Web-only deployment
 
 ```bash
 bun install
-bun run db:push                 # sync prisma/schema.prisma → db/custom.db
-bun run scripts/seed.ts         # first deploy only (demo data) — see warning below
-bun run build                   # next build (output: "standalone") + copies static/public
-bun run start                   # NODE_ENV=production bun .next/standalone/server.js
+bunx prisma db push
+bun run build
+PORT=3000 HOSTNAME=0.0.0.0 bun run start
 ```
 
-- `next.config.ts` sets `output: "standalone"`, and the `build` script copies `.next/static` and `public/` into `.next/standalone/` so the server is self-contained.
-- `bun run start` tees logs to `server.log` (dev logs go to `dev.log`).
-- The realtime service is **not** built — run it directly: `cd mini-services/realtime && bun run dev` (or `bun index.ts` in production; it is tiny and stable).
+The standalone server is self-contained (`.next/standalone` includes static assets and `public/`). The Caddy gateway (`Caddyfile`, port 81) remains available as an optional reverse proxy that routes `?XTransformPort=3003` to the realtime service.
+
+## Android deployment
+
+1. Build the static frontend: `SERVEHUB_EXPORT=1 bunx next build` (API routes are excluded from the export build).
+2. Scaffold once: `bunx tauri android init` (requires `ANDROID_HOME`/`NDK_HOME`).
+3. Build: `bunx tauri android build` or Gradle `assembleArm64Release`.
+4. Sign: `apksigner sign --ks servehub.p12 --ks-pass pass:... --out ServeHub.apk app-arm64-release-unsigned.apk`
+5. Distribute the APK to employee devices. Cleartext HTTP is enabled because the server is reached over the LAN.
+
+## Ports
+
+| Port | Service |
+|------|---------|
+| 3000 | Next.js standalone (REST API + frontend), bound to `0.0.0.0` |
+| 3003 | socket.io realtime |
+| 3004 | internal HTTP bridge (localhost only) |
+| 81   | optional Caddy gateway (dev/web topology) |
 
 ## Environment variables
 
-| Variable | Example | Required | Purpose |
-|---|---|---|---|
-| `DATABASE_URL` | `file:/opt/servehub/db/custom.db` | ✅ | SQLite file location (`.env` at repo root; Prisma reads it) |
-| `NODE_ENV` | `production` | (set by `start`) | Standalone server mode |
-| `PORT` | `3000` | — | The standalone server honors `PORT`; the `start` script keeps the default 3000 |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `file:../db/custom.db` | SQLite location (relative to `prisma/`) |
+| `PORT` | `3000` | HTTP server port |
+| `HOSTNAME` | `0.0.0.0` | bind address |
+| `NODE_ENV` | `production` | runtime environment |
 
-No other secrets are required: passwords are stored as Argon2 hashes, sessions live in SQLite ([security.md](security.md)).
+In the packaged Windows app the database lives in `%APPDATA%/com.servehub.app/db/custom.db` and these variables are set by the shell.
 
-## Caddy gateway
+## Database safety
 
-The bundled `Caddyfile` (port **81**) does two things:
-
-```caddyfile
-:81 {
-    @transform_port_query { query XTransformPort=* }
-    handle @transform_port_query {
-        reverse_proxy localhost:{query.XTransformPort} { header_up Host {host} … }
-    }
-    handle {
-        reverse_proxy localhost:3000 { header_up Host {host} … }
-    }
-}
-```
-
-Default traffic reaches Next.js; any URL with `?XTransformPort=3003` is proxied to that port — this is how the browser's socket.io client (`io("/?XTransformPort=3003")`) crosses the single gateway. For real deployments:
-
-- Replace `:81` with your site address and enable TLS (`caddy` will fetch/provision certificates automatically) — ServeHub serves plain HTTP by itself.
-- If you serve on standard ports, the realtime client URL in `src/lib/use-realtime.ts` stays the same (`io("/?XTransformPort=3003")`), since it is relative to the page origin.
-
-## Process supervision (systemd example)
-
-```ini
-# /etc/systemd/system/servehub-web.service
-[Unit]
-Description=ServeHub web (Next.js standalone)
-After=network.target
-
-[Service]
-WorkingDirectory=/opt/servehub
-Environment=NODE_ENV=production
-Environment=DATABASE_URL=file:/opt/servehub/db/custom.db
-ExecStart=/usr/local/bin/bun .next/standalone/server.js
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-
-# /etc/systemd/system/servehub-realtime.service
-[Unit]
-Description=ServeHub realtime (socket.io :3003 + bridge :3004)
-After=network.target
-
-[Service]
-WorkingDirectory=/opt/servehub/mini-services/realtime
-ExecStart=/usr/local/bin/bun index.ts
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Start with `systemctl enable --now servehub-web servehub-realtime`. Caddy runs as its own service (`caddy run --config Caddyfile`). Health check: `curl http://localhost:3000/api/health` → `{"web":"ok","database":"ok","realtime":"ok"}`.
-
-## First-deployment checklist
-
-1. ☐ Static LAN IP / hostname for the server PC; reserve it in DHCP.
-2. ☐ Install Bun (or Node 18+), deploy the repo, `bun install`.
-3. ☐ `.env` with `DATABASE_URL` pointing to a persistent path (back it up!).
-4. ☐ `bun run db:push` → `bun run scripts/seed.ts` **only for demos**; for production, create your own admin via seed then immediately change every password (seed users all use `0000` — [security.md](security.md)).
-5. ☐ `bun run build` + services configured (above) + realtime service running.
-6. ☐ Caddy TLS + firewall: allow only :81 (or :443) inbound; keep 3000/3003/3004 LAN-internal.
-7. ☐ Verify `GET /api/health` shows web/database/realtime all `ok`; log in, send a test order from a second device, confirm the kitchen device gets the realtime toast ([orders.md](orders.md)).
-8. ☐ Configure `src/lib/config.ts` for the real restaurant ([configuration.md](configuration.md)).
-9. ☐ Backups: copy `db/custom.db` while the server is stopped (or use SQLite's backup API) — it is the entire system state.
-10. ☐ Optional: Tauri shells for terminals/phones ([tauri.md](tauri.md)).
-
-## Scaling notes (MVP boundaries)
-
-- One SQLite file + one Next.js process + one realtime process = one server. This comfortably handles a restaurant's worth of traffic (tens of concurrent staff devices).
-- Horizontal scaling, Postgres migration (`provider = "postgresql"` in `prisma/schema.prisma`) and a Redis-backed socket.io adapter are all straightforward follow-ups but are out of scope for the MVP.
+- Schema changes go through `prisma db push` / migrations at build time — never `--accept-data-loss` in production.
+- The database persists across restarts and updates; first launch initializes it from the bundled template.
+- Backups: Settings → Backup (download/restore), see [backup.md](backup.md).

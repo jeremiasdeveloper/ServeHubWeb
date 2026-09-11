@@ -1,0 +1,27 @@
+[package]
+name = "servehub"
+version = "1.0.0"
+description = "ServeHub — Restaurant Operations Server & Client"
+authors = ["JeremiasDev"]
+edition = "2021"
+
+[lib]
+name = "servehub_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+mdns-sd = "0.13"
+ureq = "2"
+tauri-plugin-opener = "2"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

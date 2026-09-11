@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { AlertTriangle, Loader2, UtensilsCrossed } from "lucide-react"
+import { Loader2, UtensilsCrossed } from "lucide-react"
 import { toast } from "sonner"
 import { ApiError } from "@/lib/api-client"
 
@@ -101,28 +101,10 @@ export function LoginScreen() {
                   required
                 />
               </div>
-
-              <div className="rounded-lg border bg-muted/40 p-3">
-                <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  {t("login.demoTitle")}
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">{t("login.demoDesc")}</p>
-                <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] font-mono">
-                  <button type="button" onClick={() => { setUsername("admin"); setPassword("0000") }} className="rounded px-2 py-1 bg-background hover:bg-accent text-left">admin / 0000</button>
-                  <button type="button" onClick={() => { setUsername("manager01"); setPassword("0000") }} className="rounded px-2 py-1 bg-background hover:bg-accent text-left">manager01 / 0000</button>
-                  <button type="button" onClick={() => { setUsername("waiter01"); setPassword("0000") }} className="rounded px-2 py-1 bg-background hover:bg-accent text-left">waiter01 / 0000</button>
-                  <button type="button" onClick={() => { setUsername("kitchen01"); setPassword("0000") }} className="rounded px-2 py-1 bg-background hover:bg-accent text-left">kitchen01 / 0000</button>
-                  <button type="button" onClick={() => { setUsername("cashier01"); setPassword("0000") }} className="rounded px-2 py-1 bg-background hover:bg-accent text-left">cashier01 / 0000</button>
-                </div>
-              </div>
             </CardContent>
             <CardFooter className="flex-col gap-2">
               <Button type="submit" className="w-full" disabled={loading || !username || !password} style={{ backgroundColor: primary }}>
                 {loading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {t("login.loggingIn")}</> : t("login.submit")}
-              </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={() => { setUsername("admin"); setPassword("0000") }} className="w-full text-xs text-muted-foreground">
-                {t("login.fillAdmin")}
               </Button>
             </CardFooter>
           </form>

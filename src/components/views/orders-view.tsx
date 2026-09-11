@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { useApp } from "@/lib/store"
 import { usePermissions } from "@/lib/use-permissions"
 import { api } from "@/lib/api-client"
-import type { OrderInfo, TableInfo } from "@/lib/types"
+import type { OrderInfo, TableInfo, MenuCategoryInfo } from "@/lib/types"
 import { canTransition, nextStatuses, TRANSITION_PERMISSIONS, ORDER_STATUSES } from "@/lib/order-state"
 import { PageHeader, Loading, ErrorState, EmptyState } from "./view-primitives"
 import { StatusBadge } from "./primitives"
@@ -373,6 +373,27 @@ function CreateOrderDialog({ tables, onClose, onCreated }: { tables: TableInfo[]
   const [items, setItems] = useState<{ name: string; quantity: number; price: number; notes: string }[]>([{ name: "", quantity: 1, price: 0, notes: "" }])
   const [notes, setNotes] = useState("")
   const [sending, setSending] = useState(false)
+  // Menu picker: when the menu module is loaded, products are picked from the
+  // restaurant menu instead of typed free-text (manual mode stays available).
+  const [menu, setMenu] = useState<MenuCategoryInfo[] | null>(null)
+  const [menuMode, setMenuMode] = useState(true)
+
+  useEffect(() => {
+    api.menu()
+      .then((r) => setMenu(r.categories))
+      .catch(() => setMenu([]))
+  }, [])
+
+  const addMenuItem = (item: { name: string; price: number }) => {
+    setItems((prev) => {
+      const idx = prev.findIndex((it) => it.name === item.name && !it.notes)
+      if (idx >= 0) {
+        return prev.map((it, i) => (i === idx ? { ...it, quantity: it.quantity + 1 } : it))
+      }
+      const cleared = prev.filter((it) => it.name.trim() !== "" || it.price !== 0)
+      return [...cleared, { name: item.name, quantity: 1, price: item.price, notes: "" }]
+    })
+  }
 
   const availableTables = tables.filter((tb) => tb.status !== "OCCUPIED")
 
@@ -383,7 +404,7 @@ function CreateOrderDialog({ tables, onClose, onCreated }: { tables: TableInfo[]
   const removeItem = (i: number) => setItems(items.filter((_, idx) => idx !== i))
 
   const total = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 1), 0)
-  const valid = tableId && items.every((it) => it.name.trim() && it.quantity > 0)
+  const valid = tableId && items.length > 0 && items.every((it) => it.name.trim() && it.quantity > 0)
 
   const submit = async (send: boolean) => {
     if (!valid) {
@@ -434,11 +455,47 @@ function CreateOrderDialog({ tables, onClose, onCreated }: { tables: TableInfo[]
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>{t("orders.items")}</Label>
-              <Button type="button" variant="outline" size="sm" onClick={addItem}><Plus className="h-3.5 w-3.5 mr-1" /> {t("orders.addItem")}</Button>
+          {/* Menu picker */}
+          {menu && menu.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>{t("orders.items")}</Label>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setMenuMode((m) => !m)}>
+                  {menuMode ? t("menu.manualEntry") : t("menu.addFromMenu")}
+                </Button>
+              </div>
+              {menuMode ? (
+                <div className="space-y-3 rounded-md border p-3">
+                  {menu.map((cat) => (
+                    <div key={cat.id}>
+                      <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{cat.name}</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {cat.items.filter((it) => it.available && it.active).map((it) => (
+                          <button
+                            key={it.id}
+                            type="button"
+                            onClick={() => addMenuItem(it)}
+                            className="rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                          >
+                            <span className="font-medium">{it.name}</span>
+                            <span className="ml-1.5 text-muted-foreground">${it.price.toFixed(2)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
+          )}
+
+          <div className="space-y-2">
+            {!(menu && menu.length > 0 && menuMode) && (
+              <div className="flex items-center justify-between">
+                <Label>{t("orders.items")}</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addItem}><Plus className="h-3.5 w-3.5 mr-1" /> {t("orders.addItem")}</Button>
+              </div>
+            )}
             <div className="space-y-2">
               {items.map((it, i) => (
                 <div key={i} className="rounded-md border p-2 space-y-2">
@@ -446,9 +503,7 @@ function CreateOrderDialog({ tables, onClose, onCreated }: { tables: TableInfo[]
                     <Input placeholder={t("orders.itemName")} value={it.name} onChange={(e) => updateItem(i, "name", e.target.value)} className="flex-1" />
                     <Input type="number" min={1} placeholder={t("orders.quantity")} value={it.quantity} onChange={(e) => updateItem(i, "quantity", Number(e.target.value))} className="w-20" />
                     <Input type="number" min={0} step="0.01" placeholder={t("orders.price")} value={it.price} onChange={(e) => updateItem(i, "price", Number(e.target.value))} className="w-24" />
-                    {items.length > 1 && (
-                      <Button type="button" variant="ghost" size="icon" onClick={() => removeItem(i)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                    )}
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeItem(i)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                   </div>
                   <Input placeholder={t("orders.itemNotes")} value={it.notes} onChange={(e) => updateItem(i, "notes", e.target.value)} className="text-xs" />
                 </div>

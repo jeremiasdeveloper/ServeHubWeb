@@ -2,7 +2,7 @@
 import { db } from "@/lib/db"
 import { resolveUser } from "@/lib/api"
 import { hasPermission } from "@/lib/authz"
-import { PERMISSIONS, getRolePermissions } from "@/lib/permissions"
+import { PERMISSIONS, ROLE_PERMISSIONS } from "@/lib/permissions"
 
 export async function GET(req: Request) {
   const user = await resolveUser(req)
@@ -14,5 +14,5 @@ export async function GET(req: Request) {
     permissions: (() => { try { return JSON.parse(r.permissions || "[]") } catch { return [] } })(),
     userCount: r._count.users,
   }))
-  return Response.json({ roles: enriched, permissions: PERMISSIONS, defaults: Object.fromEntries(Object.entries({ Administrator: getRolePermissions("Administrator"), Manager: getRolePermissions("Manager"), Supervisor: getRolePermissions("Supervisor"), Waiter: getRolePermissions("Waiter"), "Kitchen Staff": getRolePermissions("Kitchen Staff"), Cashier: getRolePermissions("Cashier"), Employee: getRolePermissions("Employee") })) })
+  return Response.json({ roles: enriched, permissions: PERMISSIONS, defaults: ROLE_PERMISSIONS })
 }

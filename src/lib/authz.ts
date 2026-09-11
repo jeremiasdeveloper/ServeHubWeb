@@ -13,6 +13,7 @@ export interface AuthUser {
   id: string
   username: string
   displayName: string
+  email: string | null
   roleId: string
   role: { id: string; name: string; permissions?: string | null }
   permissions: string

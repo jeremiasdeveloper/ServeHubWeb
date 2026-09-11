@@ -3,6 +3,7 @@
 export interface ServeHubConfig {
   restaurant: { name: string; id: string; logo: string | null; tagline?: string }
   branding: { primaryColor: string; secondaryColor: string; accentColor: string }
+  appearance: { font: string }
   features: {
     orders: boolean
     employees: boolean
@@ -11,11 +12,37 @@ export interface ServeHubConfig {
     chat: boolean
     attendance: boolean
     tables: boolean
+    menu: boolean
     notifications: boolean
   }
   localization: { defaultLanguage: "es" | "en"; supportedLanguages: ("es" | "en")[] }
   server: { realtimePort: number; version: string }
   counts?: { users: number; tables: number; orders: number }
+  serverId?: string
+}
+
+export interface MenuCategoryInfo {
+  id: string
+  name: string
+  sortOrder: number
+  items: MenuItemInfo[]
+}
+
+export interface MenuItemInfo {
+  id: string
+  name: string
+  description: string | null
+  price: number
+  available: boolean
+  active: boolean
+}
+
+// Saved Android/remote connection to a specific ServeHub restaurant server.
+export interface ServerConnection {
+  baseUrl: string
+  serverId: string
+  restaurantName: string
+  savedAt: string
 }
 
 export interface CurrentUser {
