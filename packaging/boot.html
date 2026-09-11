@@ -29,21 +29,22 @@
   h1 { margin-top: 34px; font-size: 32px; font-weight: 800; letter-spacing: -.5px; text-shadow: 0 2px 12px rgba(0,0,0,.15); }
   .tagline { margin-top: 8px; font-size: 14px; color: rgba(255,255,255,.85); }
   .status { margin-top: 44px; display: flex; align-items: center; gap: 10px; font-size: 13px; color: rgba(255,255,255,.95); }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: #fff; animation: pulse 1.2s ease-in-out infinite; }
   .spinner {
     width: 16px; height: 16px; border-radius: 50%;
     border: 2px solid rgba(255,255,255,.4); border-top-color: #fff;
     animation: spin .8s linear infinite;
   }
   .warning {
-    display: none; margin-top: 28px; max-width: 420px; padding: 16px 20px;
+    display: none; margin-top: 28px; max-width: 440px; padding: 18px 22px;
     background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.35);
-    border-radius: 14px; font-size: 13px; line-height: 1.5; backdrop-filter: blur(6px);
+    border-radius: 14px; font-size: 13px; line-height: 1.55; backdrop-filter: blur(6px);
   }
+  .warning .reason { margin-top: 8px; font-family: ui-monospace, Consolas, monospace; font-size: 11px; opacity: .85; word-break: break-word; }
   .warning button {
-    margin-top: 10px; padding: 8px 18px; border: none; border-radius: 8px;
+    margin-top: 14px; padding: 9px 20px; border: none; border-radius: 8px;
     background: #fff; color: #E85D75; font-weight: 700; font-size: 13px; cursor: pointer;
   }
+  .warning button:hover { background: #ffeef1; }
   .footer { position: fixed; bottom: 18px; font-size: 12px; color: rgba(255,255,255,.7); }
   @@keyframes spin { to { transform: rotate(360deg); } }
   @@keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
@@ -63,46 +64,51 @@
       <span id="status">Iniciando servidor del restaurante…</span>
     </div>
     <div class="warning" id="warning">
-      El servidor está tardando más de lo esperado en arrancar.
-      ServeHub seguirá intentando conectar automáticamente.
-      <br />
-      <button onclick="checkNow()">Reintentar ahora</button>
+      El servidor no pudo iniciar. Revisa el archivo de registro en
+      <code>%APPDATA%\com.servehub.app\logs\servehub.log</code>.
+      <div class="reason" id="reason"></div>
+      <button id="retry">Reintentar</button>
     </div>
   </div>
   <div class="footer">ServeHub · Restaurant Operations</div>
 
 <script>
-  var SERVER = "http://127.0.0.1:3000";
+  // No network calls happen here on purpose. A fetch from the tauri:// asset
+  // origin to http://127.0.0.1:3000 is cross-origin and blocked by CORS, so
+  // the shell's Rust side owns readiness detection and drives the navigation.
   var started = Date.now();
-  var warned = false;
 
-  function updateStatus() {
-    var secs = Math.floor((Date.now() - started) / 1000);
-    document.getElementById("status").textContent =
-      "Iniciando servidor del restaurante… (" + secs + " s)";
-    if (!warned && secs > 30) {
-      warned = true;
-      document.getElementById("warning").style.display = "block";
+  function invoke(cmd, args) {
+    var internals = window.__TAURI_INTERNALS__;
+    if (internals && typeof internals.invoke === "function") {
+      return internals.invoke(cmd, args || {});
     }
+    var tauri = window.__TAURI__;
+    if (tauri && tauri.core && typeof tauri.core.invoke === "function") {
+      return tauri.core.invoke(cmd, args || {});
+    }
+    return Promise.reject(new Error("tauri bridge unavailable"));
   }
 
-  function checkNow() {
-    var controller = new AbortController();
-    var timer = setTimeout(function () { controller.abort(); }, 3000);
-    fetch(SERVER + "/api/health", { signal: controller.signal, cache: "no-store" })
-      .then(function (res) {
-        clearTimeout(timer);
-        if (res.ok) {
-          document.getElementById("status").textContent = "Servidor listo. Abriendo ServeHub…";
-          window.location.replace(SERVER + "/?servehub_desktop=1");
-        }
-      })
-      .catch(function () { clearTimeout(timer); });
-  }
+  // Simple elapsed-time readout so a slow start looks alive instead of frozen.
+  setInterval(function () {
+    var el = document.getElementById("status");
+    if (!el || document.getElementById("warning").style.display === "block") return;
+    var secs = Math.floor((Date.now() - started) / 1000);
+    el.textContent = "Iniciando servidor del restaurante… (" + secs + " s)";
+  }, 1000);
 
-  setInterval(updateStatus, 1000);
-  setInterval(checkNow, 800);
-  checkNow();
+  document.getElementById("retry").addEventListener("click", function () {
+    var warning = document.getElementById("warning");
+    var status = document.getElementById("status");
+    warning.style.display = "none";
+    status.textContent = "Reiniciando servidor del restaurante…";
+    started = Date.now();
+    invoke("restart_server").catch(function () {
+      warning.style.display = "block";
+      document.getElementById("reason").textContent = "No se pudo solicitar el reinicio.";
+    });
+  });
 </script>
 </body>
 </html>

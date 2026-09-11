@@ -1,9 +1,15 @@
 // ServeHub — Tauri shell
 //
 // Desktop (Windows): launches the embedded restaurant server (Next.js
-// standalone + realtime service) as a child process, waits for it to become
-// healthy, then advertises the restaurant over mDNS (_servehub._tcp) so
-// Android employees can discover it on the LAN.
+// standalone + realtime service) as a child process, waits for it to accept
+// TCP connections, navigates the window to it, then advertises the restaurant
+// over mDNS (_servehub._tcp) so Android employees can discover it on the LAN.
+//
+// The window starts on a local boot screen (boot.html) that performs no
+// network requests of its own: a fetch from the tauri:// asset origin to the
+// server would be cross-origin and blocked by CORS, which is why the earlier
+// JS-polling boot screens never progressed past the spinner. Rust owns the
+// readiness check and the navigation.
 //
 // Mobile (Android): thin client only. mDNS discovery is exposed as a command
 // so the connection screen can find ServeHub restaurant servers.
@@ -14,19 +20,61 @@ use serde::Serialize;
 
 #[cfg(desktop)]
 mod server_manager {
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Write};
+    use std::path::{Path, PathBuf};
     use std::process::{Child, Command, Stdio};
     use std::sync::Mutex;
     use std::time::Duration;
 
     static SERVER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
     static MDNS_DAEMON: Mutex<Option<mdns_sd::ServiceDaemon>> = Mutex::new(None);
+    static LOG_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
-    fn log(msg: &str) {
-        println!("[servehub-shell] {msg}");
+    /// The embedded server binds 0.0.0.0 (so Android can reach it over the
+    /// LAN) but the shell always addresses it over IPv4 loopback. `localhost`
+    /// is deliberately avoided: on Windows it resolves to ::1 first and the
+    /// IPv4-only listener never answers.
+    const SERVER_URL: &str = "http://127.0.0.1:3000";
+    const SERVER_PORT: u16 = 3000;
+    /// 180 * 500ms = 90s, generous enough for the first launch (database
+    /// template copy + Next.js cold start on a slow machine).
+    const WAIT_ATTEMPTS: u32 = 180;
+
+    // ---- logging ------------------------------------------------------------
+    // A release build has no console, so the shell and the child server both
+    // write to %APPDATA%\com.servehub.app\logs\servehub.log. Diagnosing a
+    // failure on an installed machine means reading that file.
+
+    fn write_log(line: &str) {
+        println!("{line}");
+        let guard = match LOG_FILE.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if let Some(path) = guard.as_ref() {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(f, "{line}");
+            }
+        }
     }
 
-    fn spawn_server(resource_dir: std::path::PathBuf, data_dir: std::path::PathBuf) -> Result<(), String> {
+    fn log(msg: &str) {
+        write_log(&format!("[servehub-shell] {msg}"));
+    }
+
+    fn init_log_file(data_dir: &Path) -> PathBuf {
+        let dir = data_dir.join("logs");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("servehub.log");
+        if let Ok(mut guard) = LOG_FILE.lock() {
+            *guard = Some(path.clone());
+        }
+        path
+    }
+
+    // ---- server process -----------------------------------------------------
+
+    fn spawn_server(resource_dir: PathBuf, data_dir: PathBuf) -> Result<(), String> {
         let server_dir = resource_dir.join("server");
         let runtime = server_dir.join("servehub-runtime.exe");
         // The combined entry starts realtime + Next.js in one process; fall
@@ -38,6 +86,8 @@ mod server_manager {
         } else {
             plain_entry
         };
+
+        log(&format!("server directory: {}", server_dir.display()));
         if !runtime.exists() {
             return Err(format!("runtime not found: {}", runtime.display()));
         }
@@ -49,12 +99,13 @@ mod server_manager {
         std::fs::create_dir_all(&db_dir).map_err(|e| e.to_string())?;
         let db_path = db_dir.join("custom.db");
         let database_url = format!("file:{}", db_path.to_string_lossy().replace('\\', "/"));
+        log(&format!("database: {database_url}"));
 
         let mut child = Command::new(&runtime)
             .args([&entry])
             .current_dir(&server_dir)
             .env("NODE_ENV", "production")
-            .env("PORT", "3000")
+            .env("PORT", SERVER_PORT.to_string())
             .env("HOSTNAME", "0.0.0.0")
             .env("DATABASE_URL", database_url)
             .stdout(Stdio::piped())
@@ -62,22 +113,30 @@ mod server_manager {
             .spawn()
             .map_err(|e| format!("failed to start server runtime: {e}"))?;
 
-        // Pipe server output to the shell log (stderr only; stdout is noisy).
+        if let Some(stdout) = child.stdout.take() {
+            std::thread::spawn(move || {
+                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                    write_log(&format!("[server] {line}"));
+                }
+            });
+        }
         if let Some(stderr) = child.stderr.take() {
             std::thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    println!("[server] {line}");
+                    write_log(&format!("[server] {line}"));
                 }
             });
         }
 
         *SERVER_CHILD.lock().unwrap() = Some(child);
+        log("server process spawned");
         Ok(())
     }
 
     fn wait_for_server() -> bool {
-        for _ in 0..180 {
-            if std::net::TcpStream::connect("127.0.0.1:3000").is_ok() {
+        for attempt in 0..WAIT_ATTEMPTS {
+            if std::net::TcpStream::connect(("127.0.0.1", SERVER_PORT)).is_ok() {
+                log(&format!("server accepted a connection after {}ms", attempt * 500));
                 return true;
             }
             std::thread::sleep(Duration::from_millis(500));
@@ -86,7 +145,7 @@ mod server_manager {
     }
 
     fn fetch_identity() -> Option<(String, String)> {
-        let body = ureq::get("http://127.0.0.1:3000/api/config")
+        let body = ureq::get(&format!("{SERVER_URL}/api/config"))
             .timeout(Duration::from_secs(10))
             .call()
             .ok()?
@@ -101,6 +160,46 @@ mod server_manager {
             .to_string();
         Some((server_id, name))
     }
+
+    // ---- window control -----------------------------------------------------
+
+    fn navigate_to_app(app: &tauri::AppHandle) {
+        use tauri::Manager;
+        let Some(window) = app.get_webview_window("main") else {
+            log("main window not found; cannot navigate");
+            return;
+        };
+        match tauri::Url::parse(&format!("{SERVER_URL}/?servehub_desktop=1")) {
+            Ok(url) => match window.navigate(url) {
+                Ok(()) => log("window navigated to the restaurant server"),
+                Err(e) => log(&format!("navigation failed: {e}")),
+            },
+            Err(e) => log(&format!("invalid server url: {e}")),
+        }
+    }
+
+    fn show_startup_failure(app: &tauri::AppHandle, reason: &str) {
+        use tauri::Manager;
+        let Some(window) = app.get_webview_window("main") else {
+            return;
+        };
+        // The boot page owns the DOM; the shell only reveals the notice and
+        // records the reason so a non-technical user sees something useful.
+        let safe: String = reason
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(300)
+            .collect();
+        let script = format!(
+            "(function(){{var w=document.getElementById('warning');if(w)w.style.display='block';\
+             var s=document.getElementById('status');if(s)s.textContent='El servidor no pudo iniciar.';\
+             var d=document.getElementById('reason');if(d)d.textContent={};}})();",
+            serde_json::to_string(&safe).unwrap_or_else(|_| "\"\"".to_string())
+        );
+        let _ = window.eval(&script);
+    }
+
+    // ---- mDNS ---------------------------------------------------------------
 
     fn local_ip() -> String {
         // Primary LAN interface address (does not send packets).
@@ -122,18 +221,13 @@ mod server_manager {
                 return;
             }
         };
-        let safe_name: String = name
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-            .take(40)
-            .collect();
         let instance = format!("servehub-{server_id}");
         let host_ip = local_ip();
         let host_name = format!("servehub-{server_id}.local.");
         let props = [
             ("serverId", server_id.to_string()),
             ("name", name.to_string()),
-            ("version", "1.0.0".to_string()),
+            ("version", "1.0.3".to_string()),
             ("realtimePort", "3003".to_string()),
         ];
         match mdns_sd::ServiceInfo::new(
@@ -141,11 +235,11 @@ mod server_manager {
             &instance,
             &host_name,
             host_ip.as_str(),
-            3000,
+            SERVER_PORT,
             &props[..],
         ) {
             Ok(info) => match daemon.register(info) {
-                Ok(_) => log(&format!("mDNS service registered: {instance} ({name})")),
+                Ok(_) => log(&format!("mDNS service registered: {instance} ({name}) at {host_ip}")),
                 Err(e) => log(&format!("mDNS register failed: {e}")),
             },
             Err(e) => log(&format!("mDNS service info failed: {e}")),
@@ -153,37 +247,70 @@ mod server_manager {
         *MDNS_DAEMON.lock().unwrap() = Some(daemon);
     }
 
-    pub fn start(app: tauri::AppHandle) {
-        std::thread::spawn(move || {
-            use tauri::Manager;
-            let resource_dir = match app.path().resource_dir() {
-                Ok(d) => d,
-                Err(e) => {
-                    log(&format!("resource dir unavailable: {e}"));
-                    return;
-                }
-            };
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    fn stop_advertising() {
+        if let Ok(mut guard) = MDNS_DAEMON.lock() {
+            if let Some(daemon) = guard.take() {
+                let _ = daemon.shutdown();
+            }
+        }
+    }
 
-            if let Err(e) = spawn_server(resource_dir, data_dir) {
-                log(&e);
+    // ---- lifecycle ----------------------------------------------------------
+
+    fn boot_sequence(app: tauri::AppHandle) {
+        use tauri::Manager;
+
+        let resource_dir = match app.path().resource_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                write_log(&format!("[servehub-shell] resource dir unavailable: {e}"));
                 return;
             }
-            if !wait_for_server() {
-                log("server did not become reachable on port 3000");
-                return;
-            }
-            log("server is up");
-            if let Some((server_id, name)) = fetch_identity() {
-                advertise(&name, &server_id);
-            } else {
-                log("could not read server identity; advertising with defaults");
-                advertise("ServeHub", "SH-0000-0000");
-            }
-        });
+        };
+        let data_dir = app
+            .path()
+            .app_data_dir()
+            .unwrap_or_else(|_| PathBuf::from("."));
+        let log_path = init_log_file(&data_dir);
+        log(&format!(
+            "ServeHub desktop shell starting (log: {})",
+            log_path.display()
+        ));
+
+        if let Err(e) = spawn_server(resource_dir, data_dir) {
+            log(&e);
+            show_startup_failure(&app, &e);
+            return;
+        }
+
+        if !wait_for_server() {
+            let reason = format!(
+                "el servidor no respondió en 127.0.0.1:{SERVER_PORT} tras 90 segundos"
+            );
+            log(&reason);
+            show_startup_failure(&app, &reason);
+            return;
+        }
+
+        navigate_to_app(&app);
+
+        if let Some((server_id, name)) = fetch_identity() {
+            advertise(&name, &server_id);
+        } else {
+            log("could not read server identity; advertising with defaults");
+            advertise("ServeHub", "SH-0000-0000");
+        }
+    }
+
+    pub fn start(app: tauri::AppHandle) {
+        std::thread::spawn(move || boot_sequence(app));
+    }
+
+    pub fn restart(app: tauri::AppHandle) {
+        log("restart requested from the boot screen");
+        stop_advertising();
+        shutdown();
+        std::thread::spawn(move || boot_sequence(app));
     }
 
     pub fn shutdown() {
@@ -207,8 +334,8 @@ pub struct DiscoveredServer {
 // mDNS/DNS-SD discovery of _servehub._tcp services on the local network.
 #[tauri::command]
 fn discover_servers(timeout_ms: u64) -> Result<Vec<DiscoveredServer>, String> {
-    use std::time::Duration;
     use mdns_sd::ServiceEvent;
+    use std::time::Duration;
 
     let daemon = mdns_sd::ServiceDaemon::new().map_err(|e| e.to_string())?;
     let receiver = daemon
@@ -260,18 +387,25 @@ fn discover_servers(timeout_ms: u64) -> Result<Vec<DiscoveredServer>, String> {
     Ok(found)
 }
 
+// Invoked by the boot screen's retry button after a failed startup.
+#[tauri::command]
+fn restart_server(app: tauri::AppHandle) {
+    #[cfg(desktop)]
+    {
+        server_manager::restart(app);
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![discover_servers])
-        .on_page_load(|webview, _payload| {
-            // Desktop shell flag: the frontend auto-connects to the embedded
-            // local server instead of showing the connection screen.
-            #[cfg(desktop)]
-            let _ = webview.eval("window.__SERVEHUB_DESKTOP_SERVER__ = 'http://127.0.0.1:3000';");
-        })
+        .invoke_handler(tauri::generate_handler![discover_servers, restart_server])
         .setup(|app| {
             #[cfg(desktop)]
             server_manager::start(app.handle().clone());
