@@ -6,7 +6,7 @@ import { create } from "zustand"
 import { api, getToken, setToken } from "./api-client"
 import type { ServeHubConfig, CurrentUser } from "./types"
 import { translations, type Locale, type TranslationKey } from "./i18n"
-import { getSavedConnection, isEmbeddedClient, getDesktopServerUrl, ensureDesktopConnection } from "./connection"
+import { getSavedConnection, isEmbeddedClient, getDesktopServerUrl, ensureDesktopConnection, setSavedConnection, storeRealtimePort } from "./connection"
 
 export type ViewKey =
   | "dashboard"
@@ -87,6 +87,22 @@ export const useApp = create<AppState>((set) => ({
   setupNeeded: null,
   setupServerId: null,
   boot: async () => {
+    // The desktop boot screen redirects here with ?servehub_desktop=1 once
+    // the embedded server is healthy: pin the connection to this origin so
+    // API and realtime (direct port 3003) work without the web proxy.
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get("servehub_desktop") === "1" && !getSavedConnection()) {
+        setSavedConnection({
+          baseUrl: window.location.origin,
+          serverId: "local",
+          restaurantName: "ServeHub",
+          savedAt: new Date().toISOString(),
+        })
+        storeRealtimePort(3003)
+        window.history.replaceState(null, "", window.location.pathname)
+      }
+    }
     // Packaged remote client (Android) without a saved server connection:
     // show the connection screen first — there is no API to talk to yet.
     if (isEmbeddedClient() && !getSavedConnection()) {

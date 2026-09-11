@@ -15,6 +15,13 @@ echo "==> Building Next.js standalone"
 bun run build
 rm -f .next/standalone/.env
 
+echo "==> Preparing desktop boot screen"
+# Desktop window loads this local page first and waits for the embedded
+# server to answer /api/health before navigating to http://localhost:3000.
+rm -rf out
+mkdir -p out
+cp packaging/boot.html out/boot.html
+
 echo "==> Bundling realtime service"
 bun build --target=bun mini-services/realtime/index.ts --outfile .next/standalone/realtime-service.js
 
