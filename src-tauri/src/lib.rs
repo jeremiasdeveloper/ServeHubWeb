@@ -76,7 +76,7 @@ mod server_manager {
     }
 
     fn wait_for_server() -> bool {
-        for _ in 0..120 {
+        for _ in 0..180 {
             if std::net::TcpStream::connect("127.0.0.1:3000").is_ok() {
                 return true;
             }
@@ -270,7 +270,7 @@ pub fn run() {
             // Desktop shell flag: the frontend auto-connects to the embedded
             // local server instead of showing the connection screen.
             #[cfg(desktop)]
-            let _ = webview.eval("window.__SERVEHUB_DESKTOP_SERVER__ = 'http://localhost:3000';");
+            let _ = webview.eval("window.__SERVEHUB_DESKTOP_SERVER__ = 'http://127.0.0.1:3000';");
         })
         .setup(|app| {
             #[cfg(desktop)]

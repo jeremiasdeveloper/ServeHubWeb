@@ -1,6 +1,6 @@
 [package]
 name = "servehub"
-version = "1.0.1"
+version = "1.0.2"
 description = "ServeHub — Restaurant Operations Server & Client"
 authors = ["JeremiasDev"]
 edition = "2021"
